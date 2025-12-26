@@ -1,0 +1,19 @@
+{
+  "name": "topperformer",
+  "version": "1.0.0",
+  "description": "営業組織専用マネジメントAI - 報告を、戦略に変える",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.0.0"
+  }
+}
