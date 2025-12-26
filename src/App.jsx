@@ -230,7 +230,7 @@ export default function App() {
 
   const verifyManagerPassword = () => {
     // Simple password check (in production, use proper authentication)
-    if (managerPassword === 'admin' || managerPassword === '1234') {
+    if (managerPassword === 'Lvntechkamuro') {
       setViewMode('manager');
       setShowPasswordModal(false);
       setManagerPassword('');
