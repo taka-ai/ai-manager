@@ -17,33 +17,48 @@ const AI_SYSTEM_PROMPT = `あなたは「TopPerformer」という営業組織専
 
 【人格設定】
 - 名前：AIマネージャー
-- 役割：「行動量で勝たせるコーチ」
-- 性格：丁寧かつ論理的、数字にこだわるプロフェッショナル
+- 役割：「行動量で勝たせるマネージャー」
+- 性格：厳しくも愛のあるマネージャー。数字にこだわり、曖昧な報告は許さない。
 
 【最重要ミッション】
-営業は「行動量」が全て。架電数・訪問数・商談数などの行動量を増やすための具体的な示唆を行う。
+営業は「行動量」が全て。目標達成に必要な行動量を逆算し、足りない部分を厳しく指摘する。
 
-【分析の視点】
-1. 報告された数字から「行動量は十分か？」を判断
-2. 目標達成に必要な行動量を逆算して提示
-3. 行動量を増やすための時間の使い方を提案
-4. 質より量。まず量を確保することを最優先
+【あなたの仕事】
+1. 報告内容を読み、「目標達成に何が足りないか」を分析する
+2. 特に「行動量」と「計画の立て方」にフォーカスして示唆を与える
+3. 曖昧な報告には質問を投げかけて深掘りする
+4. 具体的な数字がなければ、数字を聞き出す
+
+【質問の例】
+- 「今日のアポイント数は？」
+- 「架電は何件する予定？」
+- 「どうやって目標を達成するつもり？」
+- 「その行動量で本当に目標に届く？」
+- 「いつまでに、何件やる？」
+- 「午前中に何件終わらせる？」
 
 【フィードバックの形式】
-1. 📊 現状の行動量評価（数字ベース）
-2. 🔢 目標達成に必要な行動量（具体的な数字で提示）
-3. ⏰ 行動量を増やすための時間術（いつ・何をするか）
+報告内容に応じて柔軟に対応するが、必ず以下を含める：
+
+1. 📊 現状の評価（良い点があれば認める、足りない点は指摘）
+2. ❓ 深掘り質問（1〜2個、具体的な数字や計画を聞き出す）
+3. 🔢 行動量の提案（目標達成に必要な具体的な数字）
 4. 🔥 背中を押す一言
 
-「もっと架電しましょう」ではなく「1日あと10件、午前中に集中して架電」のように具体的に。`;
+【重要なルール】
+- 「頑張ります」「やります」だけの報告は許さない → 「具体的にいつ、何を、何件？」と聞く
+- 数字のない報告には → 「数字で教えて」と聞く
+- 計画が甘い場合 → 「それで本当に目標達成できる？」と問いかける
+- 良い報告には素直に褒める
+
+営業マネージャーとして、部下を目標達成に導いてください。`;
 
 const REPORT_TYPES = {
-  morning: { id: 'morning', label: '朝の日報', icon: '🌅', template: `【朝の日報（計画・作戦）】\n・今日の必達目標（数値）：\n・誰に／何をアプローチするか（重点行動）：\n・今日の懸念点：` },
-  evening: { id: 'evening', label: '夕方の日報', icon: '🌆', template: `【夕方の日報（振り返り）】\n・今日の成果（数値）：\n・うまくいったこと：\n・課題・反省点：\n・明日への申し送り：` },
-  weekly: { id: 'weekly', label: '週報', icon: '📅', template: `【週報】\n・今週の目標達成率：\n・主な成果・勝因：\n・課題と改善策：\n・来週の重点施策：` },
-  monthly: { id: 'monthly', label: '月報', icon: '📊', template: `【月報】\n・今月の売上実績 vs 目標：\n・主要KPI達成状況：\n・成功事例・学び：\n・来月の戦略：` },
-  pipeline: { id: 'pipeline', label: 'ヨミ表', icon: '📋', template: `【案件ヨミ表】\n・案件名：\n・確度（A/B/C）：\n・金額：\n・クロージング予定日：\n・ネクストアクション：` },
-  budget: { id: 'budget', label: '予算設定', icon: '🎯', template: `【予算設定】\n・月間売上目標：\n・架電目標数：\n・商談目標数：\n・成約目標数：` }
+  free: { id: 'free', label: '自由報告', icon: '💬', template: '' },
+  morning: { id: 'morning', label: '朝の計画', icon: '🌅', template: '' },
+  evening: { id: 'evening', label: '夕方の振り返り', icon: '🌆', template: '' },
+  weekly: { id: 'weekly', label: '週の振り返り', icon: '📅', template: '' },
+  consult: { id: 'consult', label: '相談・壁打ち', icon: '🤔', template: '' },
 };
 
 export default function App() {
@@ -52,17 +67,16 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  const [currentUser, setCurrentUser] = useState('高橋');
+  const [currentUser, setCurrentUser] = useState('');
+  const [showUserSetup, setShowUserSetup] = useState(false);
   const [viewMode, setViewMode] = useState('sales');
-  const [selectedPeriod, setSelectedPeriod] = useState('monthly');
-  const [selectedReportType, setSelectedReportType] = useState('morning');
-  const [reportContent, setReportContent] = useState(REPORT_TYPES.morning.template);
-  const [aiResponse, setAiResponse] = useState('');
+  const [selectedReportType, setSelectedReportType] = useState('free');
+  const [reportContent, setReportContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [reportHistory, setReportHistory] = useState([]);
   const [managerPassword, setManagerPassword] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [kpiData, setKpiData] = useState({ calls: { current: 45, target: 100 }, prospects: { current: 12, target: 20 }, deals: { current: 3, target: 5 } });
+  const [conversationHistory, setConversationHistory] = useState([]);
   const [teamData] = useState([
     { name: '高橋', calls: 45, prospects: 12, deals: 3, target: 5, status: 'good' },
     { name: '佐藤', calls: 38, prospects: 8, deals: 2, target: 5, status: 'warning' },
@@ -73,17 +87,26 @@ export default function App() {
   // ログイン状態をチェック
   useEffect(() => {
     const loggedIn = sessionStorage.getItem('topperformer_logged_in');
+    const savedUser = localStorage.getItem('topperformer_username');
     if (loggedIn === 'true') {
       setIsLoggedIn(true);
+      if (savedUser) {
+        setCurrentUser(savedUser);
+      } else {
+        setShowUserSetup(true);
+      }
     }
   }, []);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem('topperformer_history');
+    const savedConversation = sessionStorage.getItem('topperformer_conversation');
     if (savedHistory) setReportHistory(JSON.parse(savedHistory));
+    if (savedConversation) setConversationHistory(JSON.parse(savedConversation));
   }, []);
 
   useEffect(() => { localStorage.setItem('topperformer_history', JSON.stringify(reportHistory)); }, [reportHistory]);
+  useEffect(() => { sessionStorage.setItem('topperformer_conversation', JSON.stringify(conversationHistory)); }, [conversationHistory]);
 
   // ログイン処理
   const handleLogin = () => {
@@ -91,45 +114,126 @@ export default function App() {
       setIsLoggedIn(true);
       sessionStorage.setItem('topperformer_logged_in', 'true');
       setLoginError('');
+      const savedUser = localStorage.getItem('topperformer_username');
+      if (!savedUser) {
+        setShowUserSetup(true);
+      } else {
+        setCurrentUser(savedUser);
+      }
     } else {
       setLoginError('パスワードが正しくありません');
     }
+  };
+
+  // ユーザー名設定
+  const handleSetUser = (name) => {
+    setCurrentUser(name);
+    localStorage.setItem('topperformer_username', name);
+    setShowUserSetup(false);
   };
 
   // ログアウト処理
   const handleLogout = () => {
     setIsLoggedIn(false);
     sessionStorage.removeItem('topperformer_logged_in');
+    sessionStorage.removeItem('topperformer_conversation');
+    setConversationHistory([]);
   };
 
-  const handleReportTypeChange = (typeId) => { setSelectedReportType(typeId); setReportContent(REPORT_TYPES[typeId].template); };
+  const handleReportTypeChange = (typeId) => { 
+    setSelectedReportType(typeId); 
+    setReportContent(''); 
+  };
 
   const handleSubmitReport = async () => {
     if (!reportContent.trim()) return;
-    setIsLoading(true); setAiResponse('');
+    setIsLoading(true);
+    
+    // 会話履歴に追加
+    const newUserMessage = { role: 'user', content: reportContent };
+    const updatedHistory = [...conversationHistory, newUserMessage];
+    setConversationHistory(updatedHistory);
+    
+    // 会話履歴を含めたプロンプト作成
+    let conversationContext = '';
+    if (updatedHistory.length > 1) {
+      conversationContext = '\n\n【これまでの会話】\n';
+      updatedHistory.slice(-6).forEach(msg => {
+        conversationContext += msg.role === 'user' ? `営業担当: ${msg.content}\n` : `AIマネージャー: ${msg.content}\n`;
+      });
+    }
+    
+    const reportTypeLabel = REPORT_TYPES[selectedReportType].label;
+    
     try {
       const response = await fetch(`${GEMINI_API_ENDPOINT}?key=${GEMINI_API_KEY}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: `${AI_SYSTEM_PROMPT}\n\n【${currentUser}さんからの報告】\nレポートタイプ: ${REPORT_TYPES[selectedReportType].label}\n\n${reportContent}` }] }], generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } })
+        body: JSON.stringify({ 
+          contents: [{ 
+            parts: [{ 
+              text: `${AI_SYSTEM_PROMPT}${conversationContext}\n\n【${currentUser}さんからの${reportTypeLabel}】\n${reportContent}` 
+            }] 
+          }], 
+          generationConfig: { temperature: 0.8, maxOutputTokens: 1024 } 
+        })
       });
       const data = await response.json();
       if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
         const aiText = data.candidates[0].content.parts[0].text;
-        setAiResponse(aiText);
-        setReportHistory(prev => [{ id: Date.now(), user: currentUser, type: selectedReportType, content: reportContent, aiResponse: aiText, timestamp: new Date().toISOString() }, ...prev].slice(0, 50));
+        
+        // AI応答を会話履歴に追加
+        setConversationHistory(prev => [...prev, { role: 'assistant', content: aiText }]);
+        
+        setReportHistory(prev => [{ 
+          id: Date.now(), 
+          user: currentUser, 
+          type: selectedReportType, 
+          content: reportContent, 
+          aiResponse: aiText, 
+          timestamp: new Date().toISOString() 
+        }, ...prev].slice(0, 50));
+        
+        setReportContent(''); // 入力をクリア
       } else if (data.error) {
-        setAiResponse(`エラー: ${data.error.message}`);
+        setConversationHistory(prev => [...prev, { role: 'assistant', content: `エラー: ${data.error.message}` }]);
       } else { 
-        setAiResponse('エラー: AIからの応答を取得できませんでした。'); 
+        setConversationHistory(prev => [...prev, { role: 'assistant', content: 'エラー: AIからの応答を取得できませんでした。' }]);
       }
-    } catch (error) { setAiResponse(`エラー: ${error.message}`); }
+    } catch (error) { 
+      setConversationHistory(prev => [...prev, { role: 'assistant', content: `エラー: ${error.message}` }]);
+    }
     finally { setIsLoading(false); }
+  };
+
+  const handleClearConversation = () => {
+    setConversationHistory([]);
+    sessionStorage.removeItem('topperformer_conversation');
   };
 
   const handleManagerAccess = () => { if (viewMode === 'manager') setViewMode('sales'); else setShowPasswordModal(true); };
   const verifyManagerPassword = () => { if (managerPassword === MANAGER_PASSWORD) { setViewMode('manager'); setShowPasswordModal(false); setManagerPassword(''); } else alert('パスワードが正しくありません'); };
-  const handleShare = () => { navigator.clipboard.writeText(`【${REPORT_TYPES[selectedReportType].label}】\n${reportContent}\n\n【AIマネージャーからのフィードバック】\n${aiResponse}`); alert('クリップボードにコピーしました！'); };
-  const calculateProgress = (current, target) => Math.min((current / target) * 100, 100);
+  const handleShare = () => { 
+    const shareText = conversationHistory.map(msg => 
+      msg.role === 'user' ? `【${currentUser}】\n${msg.content}` : `【AIマネージャー】\n${msg.content}`
+    ).join('\n\n---\n\n');
+    navigator.clipboard.writeText(shareText); 
+    alert('会話をクリップボードにコピーしました！'); 
+  };
+
+  const getPlaceholder = () => {
+    switch(selectedReportType) {
+      case 'morning':
+        return '今日の目標や予定を自由に書いてください。\n例：「今日は新規架電30件、アポ2件取る」';
+      case 'evening':
+        return '今日の結果や気づきを自由に書いてください。\n例：「架電25件、アポ1件。思ったより取れなかった」';
+      case 'weekly':
+        return '今週の振り返りを自由に書いてください。';
+      case 'consult':
+        return '悩んでいること、相談したいことを自由に書いてください。';
+      default:
+        return '何でも自由に報告・相談してください。\nAIマネージャーが質問しながら、目標達成をサポートします。';
+    }
+  };
 
   const styles = {
     // ログイン画面のスタイル
@@ -154,49 +258,44 @@ export default function App() {
     viewToggle: { display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', backgroundColor: 'white', color: '#64748B', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },
     viewToggleActive: { backgroundColor: '#EFF6FF', borderColor: '#2563EB', color: '#2563EB' },
     main: { padding: '24px', maxWidth: '1400px', margin: '0 auto' },
-    salesLayout: { display: 'grid', gridTemplateColumns: '380px 1fr', gap: '24px' },
+    salesLayout: { display: 'grid', gridTemplateColumns: '320px 1fr', gap: '24px' },
     leftColumn: { display: 'flex', flexDirection: 'column', gap: '24px' },
     rightColumn: { display: 'flex', flexDirection: 'column', gap: '24px' },
     card: { backgroundColor: 'white', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden' },
     cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #F1F5F9' },
     cardTitleRow: { display: 'flex', alignItems: 'center', gap: '8px' },
     cardTitle: { fontSize: '15px', fontWeight: '600', color: '#334155' },
-    userBadge: { display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', backgroundColor: '#EFF6FF', borderRadius: '20px', fontSize: '13px', fontWeight: '500', color: '#2563EB' },
-    periodTabs: { display: 'flex', padding: '12px 20px', gap: '4px', backgroundColor: '#F8FAFC' },
-    periodTab: { flex: 1, padding: '8px', border: 'none', borderRadius: '8px', backgroundColor: 'transparent', color: '#64748B', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },
-    periodTabActive: { backgroundColor: 'white', color: '#2563EB', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-    kpiList: { padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' },
-    kpiItem: { display: 'flex', flexDirection: 'column', gap: '6px' },
-    kpiLabel: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', color: '#475569' },
-    kpiValue: { fontWeight: '600', color: '#1E293B' },
-    kpiTarget: { fontWeight: '400', color: '#94A3B8' },
-    progressBar: { height: '8px', backgroundColor: '#E2E8F0', borderRadius: '4px', overflow: 'hidden' },
-    progressFill: { height: '100%', backgroundColor: '#2563EB', borderRadius: '4px', transition: 'width 0.3s ease' },
-    historyList: { padding: '16px 20px' },
+    userBadge: { display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', backgroundColor: '#EFF6FF', borderRadius: '20px', fontSize: '13px', fontWeight: '500', color: '#2563EB', cursor: 'pointer' },
+    modeList: { padding: '12px' },
+    modeItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderRadius: '10px', cursor: 'pointer', marginBottom: '4px', transition: 'all 0.2s' },
+    modeItemActive: { backgroundColor: '#EFF6FF' },
+    modeIcon: { fontSize: '20px' },
+    modeLabel: { fontSize: '14px', fontWeight: '500', color: '#334155' },
+    historyList: { padding: '16px 20px', maxHeight: '300px', overflowY: 'auto' },
     emptyHistory: { color: '#94A3B8', fontSize: '13px', textAlign: 'center', padding: '20px 0' },
     historyItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid #F1F5F9' },
     historyIcon: { fontSize: '18px' },
     historyContent: { display: 'flex', flexDirection: 'column', gap: '2px' },
     historyType: { fontSize: '13px', fontWeight: '500', color: '#334155' },
     historyDate: { fontSize: '11px', color: '#94A3B8' },
-    aiHeader: { display: 'flex', alignItems: 'center', gap: '8px', padding: '16px 20px', borderBottom: '1px solid #F1F5F9' },
+    chatContainer: { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 200px)', minHeight: '500px' },
+    chatHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #F1F5F9' },
+    chatHeaderLeft: { display: 'flex', alignItems: 'center', gap: '8px' },
     aiDot: { width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22C55E' },
     aiTitle: { fontSize: '15px', fontWeight: '600', color: '#334155' },
-    aiResponseArea: { padding: '20px', minHeight: '200px' },
-    loadingContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '160px', color: '#64748B', gap: '12px' },
-    loadingSpinner: { width: '32px', height: '32px', border: '3px solid #E2E8F0', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 1s linear infinite' },
-    aiResponseText: { fontSize: '14px', lineHeight: '1.7', color: '#334155', whiteSpace: 'pre-wrap' },
-    aiPlaceholder: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '160px', color: '#94A3B8', textAlign: 'center', gap: '12px' },
-    aiPlaceholderSub: { fontSize: '12px', color: '#CBD5E1' },
-    reportTabs: { display: 'flex', padding: '12px 16px', gap: '8px', borderBottom: '1px solid #F1F5F9', overflowX: 'auto' },
-    reportTab: { padding: '8px 16px', border: 'none', borderRadius: '20px', backgroundColor: 'transparent', color: '#64748B', fontSize: '13px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' },
-    reportTabActive: { backgroundColor: '#2563EB', color: 'white' },
-    inputContainer: { position: 'relative', padding: '16px 20px' },
-    textarea: { width: '100%', minHeight: '140px', padding: '16px', paddingRight: '48px', border: '1px solid #E2E8F0', borderRadius: '12px', fontSize: '14px', lineHeight: '1.6', color: '#334155', resize: 'vertical', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' },
-    micButton: { position: 'absolute', right: '32px', bottom: '32px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: '8px', backgroundColor: 'transparent', color: '#94A3B8', cursor: 'pointer' },
-    inputFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 20px', borderTop: '1px solid #F1F5F9', backgroundColor: '#FAFBFC' },
-    footerText: { fontSize: '12px', color: '#94A3B8' },
-    submitButton: { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', border: 'none', borderRadius: '10px', backgroundColor: '#2563EB', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+    clearButton: { padding: '6px 12px', border: '1px solid #E2E8F0', borderRadius: '6px', backgroundColor: 'white', color: '#64748B', fontSize: '12px', cursor: 'pointer' },
+    chatMessages: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' },
+    messageUser: { alignSelf: 'flex-end', maxWidth: '80%', padding: '12px 16px', backgroundColor: '#2563EB', color: 'white', borderRadius: '16px 16px 4px 16px', fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap' },
+    messageAI: { alignSelf: 'flex-start', maxWidth: '80%', padding: '12px 16px', backgroundColor: '#F1F5F9', color: '#334155', borderRadius: '16px 16px 16px 4px', fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap' },
+    loadingMessage: { alignSelf: 'flex-start', padding: '12px 16px', backgroundColor: '#F1F5F9', borderRadius: '16px', display: 'flex', alignItems: 'center', gap: '8px' },
+    loadingDots: { display: 'flex', gap: '4px' },
+    loadingDot: { width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#94A3B8', animation: 'bounce 1.4s infinite ease-in-out' },
+    chatPlaceholder: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94A3B8', textAlign: 'center', gap: '12px' },
+    chatInputArea: { padding: '16px 20px', borderTop: '1px solid #F1F5F9', backgroundColor: '#FAFBFC' },
+    chatInputWrapper: { display: 'flex', gap: '12px', alignItems: 'flex-end' },
+    textarea: { flex: 1, minHeight: '60px', maxHeight: '150px', padding: '12px 16px', border: '1px solid #E2E8F0', borderRadius: '12px', fontSize: '14px', lineHeight: '1.6', color: '#334155', resize: 'none', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' },
+    submitButton: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', border: 'none', borderRadius: '12px', backgroundColor: '#2563EB', color: 'white', cursor: 'pointer', flexShrink: 0 },
+    submitButtonDisabled: { backgroundColor: '#94A3B8', cursor: 'not-allowed' },
     managerLayout: { display: 'flex', flexDirection: 'column', gap: '24px' },
     managerCard: { backgroundColor: 'white', borderRadius: '16px', border: '1px solid #E2E8F0', padding: '24px' },
     managerTitle: { display: 'flex', alignItems: 'center', gap: '12px', fontSize: '18px', fontWeight: '600', color: '#1E293B', marginBottom: '20px' },
@@ -251,6 +350,34 @@ export default function App() {
     );
   }
 
+  // ユーザー名設定画面
+  if (showUserSetup) {
+    return (
+      <div style={styles.loginContainer}>
+        <div style={styles.loginBox}>
+          <h1 style={styles.loginTitle}>ようこそ！</h1>
+          <p style={styles.loginSubtitle}>あなたの名前を教えてください</p>
+          
+          <input
+            type="text"
+            style={styles.loginInput}
+            placeholder="名前を入力..."
+            onKeyDown={(e) => e.key === 'Enter' && e.target.value && handleSetUser(e.target.value)}
+          />
+          <button 
+            style={styles.loginButton} 
+            onClick={() => {
+              const input = document.querySelector('input[type="text"]');
+              if (input.value) handleSetUser(input.value);
+            }}
+          >
+            始める
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.container}>
       <header style={styles.header}>
@@ -260,7 +387,7 @@ export default function App() {
         </div>
         <div style={styles.headerRight}>
           <button style={styles.logoutButton} onClick={handleLogout}>ログアウト</button>
-          <button style={styles.shareButton} onClick={handleShare} disabled={!aiResponse}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg></button>
+          <button style={styles.shareButton} onClick={handleShare} disabled={conversationHistory.length === 0}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg></button>
           <button style={{...styles.viewToggle, ...(viewMode === 'sales' ? styles.viewToggleActive : {})}} onClick={() => setViewMode('sales')}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z"/></svg>営業担当</button>
           <button style={{...styles.viewToggle, ...(viewMode === 'manager' ? styles.viewToggleActive : {})}} onClick={handleManagerAccess}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18M18 17V9M13 17V5M8 17v-3"/></svg>管理者</button>
         </div>
@@ -272,32 +399,117 @@ export default function App() {
             <div style={styles.leftColumn}>
               <div style={styles.card}>
                 <div style={styles.cardHeader}>
-                  <div style={styles.cardTitleRow}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span style={styles.cardTitle}>進捗状況</span></div>
-                  <div style={styles.userBadge}>{currentUser} 👤</div>
+                  <div style={styles.cardTitleRow}>
+                    <span style={styles.cardTitle}>報告モード</span>
+                  </div>
+                  <div style={styles.userBadge} onClick={() => setShowUserSetup(true)}>{currentUser} 👤</div>
                 </div>
-                <div style={styles.periodTabs}>
-                  {['daily', 'weekly', 'monthly'].map(period => (<button key={period} style={{...styles.periodTab, ...(selectedPeriod === period ? styles.periodTabActive : {})}} onClick={() => setSelectedPeriod(period)}>{period === 'daily' ? '日次' : period === 'weekly' ? '週次' : '月次'}</button>))}
-                </div>
-                <div style={styles.kpiList}>
-                  <div style={styles.kpiItem}><div style={styles.kpiLabel}><span>架電数</span><span style={styles.kpiValue}>{kpiData.calls.current}<span style={styles.kpiTarget}>/{kpiData.calls.target}件</span></span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${calculateProgress(kpiData.calls.current, kpiData.calls.target)}%`}}/></div></div>
-                  <div style={styles.kpiItem}><div style={styles.kpiLabel}><span>顧客代理数</span><span style={styles.kpiValue}>{kpiData.prospects.current}<span style={styles.kpiTarget}>/{kpiData.prospects.target}件</span></span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${calculateProgress(kpiData.prospects.current, kpiData.prospects.target)}%`}}/></div></div>
-                  <div style={styles.kpiItem}><div style={styles.kpiLabel}><span>成約獲得数</span><span style={styles.kpiValue}>{kpiData.deals.current}<span style={styles.kpiTarget}>/{kpiData.deals.target}件</span></span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${calculateProgress(kpiData.deals.current, kpiData.deals.target)}%`}}/></div></div>
+                <div style={styles.modeList}>
+                  {Object.values(REPORT_TYPES).map(type => (
+                    <div 
+                      key={type.id} 
+                      style={{...styles.modeItem, ...(selectedReportType === type.id ? styles.modeItemActive : {})}}
+                      onClick={() => handleReportTypeChange(type.id)}
+                    >
+                      <span style={styles.modeIcon}>{type.icon}</span>
+                      <span style={styles.modeLabel}>{type.label}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
               <div style={styles.card}>
-                <div style={styles.cardHeader}><div style={styles.cardTitleRow}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span style={styles.cardTitle}>最近のレポート</span></div></div>
-                <div style={styles.historyList}>{reportHistory.length === 0 ? <p style={styles.emptyHistory}>{currentUser}さんの履歴はありません。</p> : reportHistory.slice(0, 5).map(report => (<div key={report.id} style={styles.historyItem}><span style={styles.historyIcon}>{REPORT_TYPES[report.type]?.icon || '📝'}</span><div style={styles.historyContent}><span style={styles.historyType}>{REPORT_TYPES[report.type]?.label}</span><span style={styles.historyDate}>{new Date(report.timestamp).toLocaleDateString('ja-JP')}</span></div></div>))}</div>
+                <div style={styles.cardHeader}>
+                  <div style={styles.cardTitleRow}>
+                    <span style={styles.cardTitle}>履歴</span>
+                  </div>
+                </div>
+                <div style={styles.historyList}>
+                  {reportHistory.length === 0 ? (
+                    <p style={styles.emptyHistory}>まだ履歴がありません</p>
+                  ) : (
+                    reportHistory.slice(0, 10).map(report => (
+                      <div key={report.id} style={styles.historyItem}>
+                        <span style={styles.historyIcon}>{REPORT_TYPES[report.type]?.icon || '📝'}</span>
+                        <div style={styles.historyContent}>
+                          <span style={styles.historyType}>{REPORT_TYPES[report.type]?.label}</span>
+                          <span style={styles.historyDate}>{new Date(report.timestamp).toLocaleDateString('ja-JP')}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
             <div style={styles.rightColumn}>
-              <div style={styles.card}>
-                <div style={styles.aiHeader}><span style={styles.aiDot}></span><span style={styles.aiTitle}>AIマネージャーの応答</span></div>
-                <div style={styles.aiResponseArea}>{isLoading ? <div style={styles.loadingContainer}><div style={styles.loadingSpinner}></div><p>分析中...</p></div> : aiResponse ? <div style={styles.aiResponseText}>{aiResponse}</div> : <div style={styles.aiPlaceholder}><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="1.5"><path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zM12 8v8M8 12h8"/></svg><p>モードを選択し、日報や相談内容を入力してください。</p><p style={styles.aiPlaceholderSub}>スマホの場合はホーム画面に追加してご利用ください。</p></div>}</div>
-              </div>
-              <div style={styles.card}>
-                <div style={styles.reportTabs}>{Object.values(REPORT_TYPES).map(type => (<button key={type.id} style={{...styles.reportTab, ...(selectedReportType === type.id ? styles.reportTabActive : {})}} onClick={() => handleReportTypeChange(type.id)}>{type.label}</button>))}</div>
-                <div style={styles.inputContainer}><textarea style={styles.textarea} value={reportContent} onChange={(e) => setReportContent(e.target.value)} /><button style={styles.micButton} title="音声入力"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg></button></div>
-                <div style={styles.inputFooter}><p style={styles.footerText}>AIマネージャーが数値と行動・感情を分析します。</p><button style={styles.submitButton} onClick={handleSubmitReport} disabled={isLoading}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>日報を提出</button></div>
+              <div style={{...styles.card, ...styles.chatContainer}}>
+                <div style={styles.chatHeader}>
+                  <div style={styles.chatHeaderLeft}>
+                    <span style={styles.aiDot}></span>
+                    <span style={styles.aiTitle}>AIマネージャー</span>
+                  </div>
+                  {conversationHistory.length > 0 && (
+                    <button style={styles.clearButton} onClick={handleClearConversation}>
+                      会話をクリア
+                    </button>
+                  )}
+                </div>
+                
+                <div style={styles.chatMessages}>
+                  {conversationHistory.length === 0 ? (
+                    <div style={styles.chatPlaceholder}>
+                      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="1.5">
+                        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                      </svg>
+                      <p>AIマネージャーに報告・相談してください。</p>
+                      <p style={{fontSize: '12px', color: '#94A3B8'}}>
+                        目標達成のために必要な行動量を一緒に考えます。
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      {conversationHistory.map((msg, idx) => (
+                        <div key={idx} style={msg.role === 'user' ? styles.messageUser : styles.messageAI}>
+                          {msg.content}
+                        </div>
+                      ))}
+                      {isLoading && (
+                        <div style={styles.loadingMessage}>
+                          <div style={styles.loadingDots}>
+                            <div style={{...styles.loadingDot, animationDelay: '0s'}}></div>
+                            <div style={{...styles.loadingDot, animationDelay: '0.2s'}}></div>
+                            <div style={{...styles.loadingDot, animationDelay: '0.4s'}}></div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                
+                <div style={styles.chatInputArea}>
+                  <div style={styles.chatInputWrapper}>
+                    <textarea 
+                      style={styles.textarea} 
+                      value={reportContent} 
+                      onChange={(e) => setReportContent(e.target.value)}
+                      placeholder={getPlaceholder()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSubmitReport();
+                        }
+                      }}
+                    />
+                    <button 
+                      style={{...styles.submitButton, ...(isLoading || !reportContent.trim() ? styles.submitButtonDisabled : {})}} 
+                      onClick={handleSubmitReport} 
+                      disabled={isLoading || !reportContent.trim()}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -322,7 +534,12 @@ export default function App() {
       </main>
 
       {showPasswordModal && (<div style={styles.modalOverlay}><div style={styles.modal}><h3 style={styles.modalTitle}>管理者パスワード</h3><p style={styles.modalText}>管理者ビューにアクセスするにはパスワードを入力してください。</p><input type="password" style={styles.modalInput} placeholder="パスワードを入力..." value={managerPassword} onChange={(e) => setManagerPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && verifyManagerPassword()} /><div style={styles.modalButtons}><button style={styles.modalCancel} onClick={() => { setShowPasswordModal(false); setManagerPassword(''); }}>キャンセル</button><button style={styles.modalConfirm} onClick={verifyManagerPassword}>ログイン</button></div></div></div>)}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes bounce {
+          0%, 80%, 100% { transform: translateY(0); }
+          40% { transform: translateY(-6px); }
+        }
+      `}</style>
     </div>
   );
 }
