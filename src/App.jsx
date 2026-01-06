@@ -72,12 +72,12 @@ const AI_SYSTEM_PROMPT = `あなたは「TopPerformer」という営業組織専
 営業マネージャーとして、部下を目標達成に導いてください。`;
 
 const REPORT_TYPES = {
-  morning: { id: 'morning', label: '朝の日報', icon: '🌅', template: `【朝の日報（計画・作戦）】\n・今日の必達目標（数値）：\n・誰に／何をアプローチするか（重点行動）：\n・今日の懸念点：` },
-  evening: { id: 'evening', label: '夕方の日報', icon: '🌆', template: `【夕方の日報（振り返り）】\n・今日の成果（数値）：\n・うまくいったこと：\n・課題・反省点：\n・明日への申し送り：` },
-  weekly: { id: 'weekly', label: '週報', icon: '📅', template: `【週報】\n・今週の目標達成率：\n・主な成果・勝因：\n・課題と改善策：\n・来週の重点施策：` },
-  monthly: { id: 'monthly', label: '月報', icon: '📊', template: `【月報】\n・今月の売上実績 vs 目標：\n・主要KPI達成状況：\n・成功事例・学び：\n・来月の戦略：` },
-  pipeline: { id: 'pipeline', label: 'ヨミ表', icon: '📋', template: `【案件ヨミ表】\n・案件名：\n・確度（A/B/C）：\n・金額：\n・クロージング予定日：\n・ネクストアクション：` },
-  budget: { id: 'budget', label: '予算設定', icon: '🎯', template: `【予算設定】\n・月間売上目標：\n・架電目標数：\n・商談目標数：\n・成約目標数：` }
+  morning: { id: 'morning', label: '朝の日報', icon: '🌅', template: '' },
+  evening: { id: 'evening', label: '夕方の日報', icon: '🌆', template: '' },
+  weekly: { id: 'weekly', label: '週報', icon: '📅', template: '' },
+  monthly: { id: 'monthly', label: '月報', icon: '📊', template: '' },
+  pipeline: { id: 'pipeline', label: 'ヨミ表', icon: '📋', template: '' },
+  free: { id: 'free', label: '自由入力', icon: '💬', template: '' }
 };
 
 export default function App() {
@@ -92,8 +92,8 @@ export default function App() {
 
   const [viewMode, setViewMode] = useState('sales');
   const [selectedPeriod, setSelectedPeriod] = useState('monthly');
-  const [selectedReportType, setSelectedReportType] = useState('morning');
-  const [reportContent, setReportContent] = useState(REPORT_TYPES.morning.template);
+  const [selectedReportType, setSelectedReportType] = useState('free');
+  const [reportContent, setReportContent] = useState('');
   const [aiResponse, setAiResponse] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [reportHistory, setReportHistory] = useState([]);
@@ -528,7 +528,7 @@ export default function App() {
                   ))}
                 </div>
                 <div style={styles.inputContainer}>
-                  <textarea style={styles.textarea} value={reportContent} onChange={(e) => setReportContent(e.target.value)} />
+                  <textarea style={styles.textarea} value={reportContent} onChange={(e) => setReportContent(e.target.value)} placeholder="自由に報告・相談を入力してください。AIマネージャーが内容に応じてフィードバックします。" />
                 </div>
                 <div style={styles.inputFooter}>
                   <p style={styles.footerText}>AIマネージャーが行動量と計画を分析します。</p>
