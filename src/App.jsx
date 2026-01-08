@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 // ============================================
 // TopPerformer - AI Sales Manager
 // 「報告を、戦略に変える」
+// KPI逆算設計 + 厳格マネジメント
 // ============================================
 
 const GEMINI_API_KEY = 'AIzaSyAUGPoHfMrgQ125bGUZsvZWsByZe5ZZwRE';
@@ -16,13 +17,51 @@ const USERS = [
   { id: 'kaiho', name: '海保', role: '', icon: '👤' },
 ];
 
-// デフォルトのKPI項目
-const DEFAULT_KPI_ITEMS = [
-  { id: 'calls', name: '架電数', unit: '件' },
-  { id: 'appointments', name: 'アポ獲得数', unit: '件' },
-  { id: 'areaReg', name: 'エリア登録数', unit: '件' },
-  { id: 'deals', name: '受注数', unit: '件' },
-];
+// デフォルトKPI設定（逆算設計）
+const DEFAULT_KPI_SETTINGS = {
+  // ①営業KPI
+  monthlyBudget: 1680000,        // 月間受注予算(円/月)
+  avgOrderPrice: 10000,          // 平均受注単価(円)
+  conversionRate: 0.30,          // 受注率(商談→受注)
+  appointmentRate: 0.15,         // アポ率(架電→商談)
+  // ②架電可能日数
+  monthlyWorkDays: 20,           // 月内営業日数
+  holidayDays: 5,                // 不動産会社定休日(火・水)
+  // ③日次KPI
+  dailyCallTime: 420,            // 1日架電可能時間(分)
+  timePerCall: 20,               // 1架電あたり時間(分)
+};
+
+// KPIを計算する関数
+const calculateKPI = (settings) => {
+  const s = settings;
+  // 月次
+  const targetAreas = Math.ceil(s.monthlyBudget / s.avgOrderPrice / 12);
+  const targetDeals = targetAreas;
+  const requiredMeetings = Math.ceil(targetDeals / s.conversionRate);
+  const requiredCalls = Math.ceil(requiredMeetings / s.appointmentRate);
+  // 架電可能日数
+  const callableDays = s.monthlyWorkDays - s.holidayDays;
+  // 日次
+  const dailyRequiredCalls = Math.ceil(requiredCalls / callableDays);
+  const maxDailyCalls = Math.floor(s.dailyCallTime / s.timePerCall);
+  const isAchievable = dailyRequiredCalls <= maxDailyCalls;
+  
+  return {
+    targetAreas,
+    targetDeals,
+    requiredMeetings,
+    requiredCalls,
+    callableDays,
+    dailyRequiredCalls,
+    maxDailyCalls,
+    isAchievable,
+    // 週次換算
+    weeklyRequiredCalls: Math.ceil(requiredCalls / 4),
+    weeklyRequiredMeetings: Math.ceil(requiredMeetings / 4),
+    weeklyRequiredDeals: Math.ceil(targetDeals / 4),
+  };
+};
 
 // デフォルトのヨミ表項目
 const DEFAULT_YOMI_FIELDS = [
@@ -40,36 +79,134 @@ const YOMI_STATUS = [
   { id: 'lost', label: '失注', color: '#DC2626', bgColor: '#FEE2E2' },
 ];
 
-const AI_SYSTEM_PROMPT = `あなたは「TopPerformer」という営業組織専用AIマネージャーです。
+// 厳格なAIマネージャープロンプト
+const createAIPrompt = (user, kpiSettings, kpiCalc, actuals, yomis) => {
+  const progress = {
+    calls: actuals.calls || 0,
+    meetings: actuals.meetings || 0,
+    deals: actuals.deals || 0,
+    areas: actuals.areas || 0,
+  };
+  
+  const callsRate = kpiCalc.requiredCalls > 0 ? Math.round((progress.calls / kpiCalc.requiredCalls) * 100) : 0;
+  const meetingsRate = kpiCalc.requiredMeetings > 0 ? Math.round((progress.meetings / kpiCalc.requiredMeetings) * 100) : 0;
+  const dealsRate = kpiCalc.targetDeals > 0 ? Math.round((progress.deals / kpiCalc.targetDeals) * 100) : 0;
+  
+  const yomiSummary = yomis.reduce((acc, y) => {
+    acc[y.status] = (acc[y.status] || 0) + 1;
+    acc.totalAmount = (acc.totalAmount || 0) + (y.totalAmount || 0);
+    return acc;
+  }, {});
 
-【人格設定】
-- 名前：AIマネージャー
-- 役割：「行動量で勝たせるマネージャー」
-- 性格：厳しくも愛のあるマネージャー。数字にこだわり、曖昧な報告は許さない。
+  return `あなたは「TopPerformer」の厳格なAI営業マネージャーです。
 
-【最重要ミッション】
-営業は「行動量」が全て。目標達成に必要な行動量を逆算し、足りない部分を厳しく指摘する。
+【絶対的な行動原則】
+あなたは「勝たせるマネージャー」であり、決して甘い指導は行いません。
+営業は「行動量」が全てであり、目標未達の原因は必ず「行動量不足」か「率の問題」のどちらかです。
+「物理的に達成不可能」「設計の問題」という言い訳は、KPI設計が破綻している場合以外は認めません。
 
-【あなたの仕事】
-1. 報告内容を読み、「目標達成に何が足りないか」を分析する
-2. 特に「行動量」と「計画の立て方」にフォーカスして示唆を与える
-3. 曖昧な報告には質問を投げかけて深掘りする
-4. 具体的な数字がなければ、数字を聞き出す
+【KPI逆算設計の理解】
+このKPIは「予算→受注→商談→アポイント→架電→稼働時間」の流れで、ゴールから逆算して設計されています。
+感覚的な努力ではなく、数値と構造で管理される再現性のあるプロセスです。
 
-【フィードバックの形式】
-1. 📊 現状の評価（良い点があれば認める、足りない点は指摘）
-2. ❓ 深掘り質問（1〜2個、具体的な数字や計画を聞き出す）
-3. 🔢 行動量の提案（目標達成に必要な具体的な数字）
-4. 🔥 背中を押す一言
+【${user.name}さんのKPI設定】
+■月間目標
+・月間受注予算: ${kpiSettings.monthlyBudget.toLocaleString()}円
+・目標受注数: ${kpiCalc.targetDeals}件
+・必要商談数: ${kpiCalc.requiredMeetings}件（受注率${(kpiSettings.conversionRate * 100).toFixed(0)}%で逆算）
+・必要架電数: ${kpiCalc.requiredCalls}件（アポ率${(kpiSettings.appointmentRate * 100).toFixed(0)}%で逆算）
 
-営業マネージャーとして、部下を目標達成に導いてください。`;
+■日次目標
+・架電可能日数: ${kpiCalc.callableDays}日/月
+・1日あたり必要架電数: ${kpiCalc.dailyRequiredCalls}件
+・1日最大架電可能数: ${kpiCalc.maxDailyCalls}件（${kpiSettings.dailyCallTime}分÷${kpiSettings.timePerCall}分/件）
+・物理的達成可否: ${kpiCalc.isAchievable ? '達成可能' : '⚠️設計見直し必要'}
+
+【現在の進捗】
+・架電数: ${progress.calls}件 / ${kpiCalc.requiredCalls}件（${callsRate}%）
+・商談数: ${progress.meetings}件 / ${kpiCalc.requiredMeetings}件（${meetingsRate}%）
+・受注数: ${progress.deals}件 / ${kpiCalc.targetDeals}件（${dealsRate}%）
+
+【ヨミ表状況】
+・Aヨミ: ${yomiSummary.A || 0}件
+・Bヨミ: ${yomiSummary.B || 0}件
+・Cヨミ: ${yomiSummary.C || 0}件
+・受注済: ${yomiSummary.won || 0}件
+・ヨミ合計金額: ${(yomiSummary.totalAmount || 0).toLocaleString()}円
+
+【フィードバックの原則】
+1. 📊 数値で現状を評価する
+   - 行動量は足りているか？
+   - 進捗率は適切か？
+   - 率（アポ率・受注率）は想定通りか？
+
+2. ❓ 厳しく深掘りする質問
+   - 「今日は何件架電した？」
+   - 「なぜ目標に届いていない？」
+   - 「残り何日で何件必要か理解しているか？」
+   - 「アポ率が低い原因は何か？」
+
+3. 🔢 具体的な数字で指示する
+   - 「今日中にあと○件架電しろ」
+   - 「今週中に商談を○件確保しろ」
+   - 「このペースだと月末に○件不足する」
+
+4. 🔥 言い訳を許さない
+   - 「頑張ります」は不可→「いつ、何を、何件？」
+   - 「物理的に無理」は不可→「では何が足りない？時間か？スキルか？」
+   - 「設計がおかしい」は不可→「数字で証明しろ」
+
+【重要】
+未達時は「気合が足りない」ではなく、
+「行動量が足りないのか」「率の問題なのか」を数値で判断し、
+具体的な改善アクションを指示してください。
+
+営業マネージャーとして、${user.name}を目標達成に導いてください。`;
+};
+
+// 管理者向け分析プロンプト
+const createManagerAnalysisPrompt = (teamData) => {
+  let analysis = `あなたは営業組織の分析AIです。以下のチームデータを分析し、各担当者のボトルネックと改善施策を提示してください。
+
+【チーム状況】
+`;
+  
+  teamData.forEach(member => {
+    const kpi = member.kpiCalc;
+    const actual = member.actual;
+    const callsRate = kpi.requiredCalls > 0 ? Math.round((actual.calls / kpi.requiredCalls) * 100) : 0;
+    const meetingsRate = kpi.requiredMeetings > 0 ? Math.round((actual.meetings / kpi.requiredMeetings) * 100) : 0;
+    const actualAppointmentRate = actual.calls > 0 ? ((actual.meetings / actual.calls) * 100).toFixed(1) : 0;
+    const actualConversionRate = actual.meetings > 0 ? ((actual.deals / actual.meetings) * 100).toFixed(1) : 0;
+    
+    analysis += `
+■${member.name}
+・架電進捗: ${actual.calls}/${kpi.requiredCalls}件（${callsRate}%）
+・商談進捗: ${actual.meetings}/${kpi.requiredMeetings}件（${meetingsRate}%）
+・受注進捗: ${actual.deals}/${kpi.targetDeals}件
+・実績アポ率: ${actualAppointmentRate}%（目標${(member.kpiSettings.appointmentRate * 100).toFixed(0)}%）
+・実績受注率: ${actualConversionRate}%（目標${(member.kpiSettings.conversionRate * 100).toFixed(0)}%）
+・期日超過案件: ${member.overdueCount}件
+`;
+  });
+  
+  analysis += `
+【分析してほしいこと】
+1. 各担当者のボトルネック（行動量不足 or 率の問題）
+2. 優先的に介入すべき担当者
+3. 具体的な支援・改善施策
+4. 構造的な問題があれば指摘
+
+数値に基づいた客観的な分析をお願いします。`;
+  
+  return analysis;
+};
 
 const REPORT_TYPES = {
   free: { id: 'free', label: '自由入力', icon: '💬' },
   morning: { id: 'morning', label: '朝の日報', icon: '🌅' },
   evening: { id: 'evening', label: '夕方の日報', icon: '🌆' },
   weekly: { id: 'weekly', label: '週報', icon: '📅' },
-  monthly: { id: 'monthly', label: '月報', icon: '📊' },
 };
 
 const getCurrentYearMonth = () => {
@@ -97,17 +234,14 @@ const isOverdue = (dateStr) => {
   if (!dateStr) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  return target < today;
+  return new Date(dateStr) < today;
 };
 
 const getDaysUntil = (dateStr) => {
   if (!dateStr) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  const diff = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
-  return diff;
+  return Math.ceil((new Date(dateStr) - today) / (1000 * 60 * 60 * 24));
 };
 
 export default function App() {
@@ -124,42 +258,46 @@ export default function App() {
   const [reportHistory, setReportHistory] = useState([]);
   const [managerPassword, setManagerPassword] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [showKpiSettingsModal, setShowKpiSettingsModal] = useState(false);
   const [showActualModal, setShowActualModal] = useState(false);
   const [showYomiModal, setShowYomiModal] = useState(false);
   const [showYomiSettingsModal, setShowYomiSettingsModal] = useState(false);
+  const [managerAnalysis, setManagerAnalysis] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   
-  const [kpiItems, setKpiItems] = useState(DEFAULT_KPI_ITEMS);
-  const [budgets, setBudgets] = useState({
-    takahashi: { calls: 100, appointments: 20, areaReg: 10, deals: 5 },
-    kaiho: { calls: 80, appointments: 15, areaReg: 8, deals: 4 },
+  // KPI設定（ユーザーごと）
+  const [kpiSettings, setKpiSettings] = useState({
+    takahashi: { ...DEFAULT_KPI_SETTINGS },
+    kaiho: { ...DEFAULT_KPI_SETTINGS, monthlyBudget: 1200000 },
   });
+  
+  // 実績（ユーザーごと）
   const [actuals, setActuals] = useState({
-    takahashi: { calls: 0, appointments: 0, areaReg: 0, deals: 0 },
-    kaiho: { calls: 0, appointments: 0, areaReg: 0, deals: 0 },
+    takahashi: { calls: 0, meetings: 0, deals: 0, areas: 0 },
+    kaiho: { calls: 0, meetings: 0, deals: 0, areas: 0 },
   });
   
+  // 編集用KPI設定
+  const [editingKpiSettings, setEditingKpiSettings] = useState({ ...DEFAULT_KPI_SETTINGS });
+  
+  // ヨミ表
   const [yomiFields, setYomiFields] = useState(DEFAULT_YOMI_FIELDS);
   const [yomiData, setYomiData] = useState({});
   const [selectedYomiMonth, setSelectedYomiMonth] = useState(getCurrentYearMonth());
   const [editingYomi, setEditingYomi] = useState(null);
   const [editingYomiFields, setEditingYomiFields] = useState([]);
-  const [editingKpiItems, setEditingKpiItems] = useState([]);
-  const [editingBudget, setEditingBudget] = useState({});
 
   const currentUser = USERS.find(u => u.id === currentUserId) || USERS[0];
-  const currentBudget = budgets[currentUserId] || {};
-  const currentActual = actuals[currentUserId] || {};
+  const currentKpiSettings = kpiSettings[currentUserId] || DEFAULT_KPI_SETTINGS;
+  const currentKpiCalc = calculateKPI(currentKpiSettings);
+  const currentActual = actuals[currentUserId] || { calls: 0, meetings: 0, deals: 0, areas: 0 };
   const currentYomiList = yomiData[selectedYomiMonth]?.[currentUserId] || [];
 
-  // 期日超過の案件を取得
   const getOverdueYomis = (userId) => {
-    const month = getCurrentYearMonth();
-    const list = yomiData[month]?.[userId] || [];
+    const list = yomiData[getCurrentYearMonth()]?.[userId] || [];
     return list.filter(y => y.closingDate && isOverdue(y.closingDate) && !['won', 'lost'].includes(y.status));
   };
 
-  // 全ユーザーの期日超過案件
   const getAllOverdueYomis = () => {
     const overdues = [];
     USERS.forEach(user => {
@@ -176,26 +314,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const savedHistory = localStorage.getItem('topperformer_history');
-    const savedBudgets = localStorage.getItem('topperformer_budgets');
-    const savedActuals = localStorage.getItem('topperformer_actuals');
-    const savedKpiItems = localStorage.getItem('topperformer_kpi_items');
-    const savedYomiData = localStorage.getItem('topperformer_yomi_data');
-    const savedYomiFields = localStorage.getItem('topperformer_yomi_fields');
-    if (savedHistory) setReportHistory(JSON.parse(savedHistory));
-    if (savedBudgets) setBudgets(JSON.parse(savedBudgets));
-    if (savedActuals) setActuals(JSON.parse(savedActuals));
-    if (savedKpiItems) setKpiItems(JSON.parse(savedKpiItems));
-    if (savedYomiData) setYomiData(JSON.parse(savedYomiData));
-    if (savedYomiFields) setYomiFields(JSON.parse(savedYomiFields));
+    const saved = localStorage.getItem('topperformer_data_v2');
+    if (saved) {
+      const data = JSON.parse(saved);
+      if (data.kpiSettings) setKpiSettings(data.kpiSettings);
+      if (data.actuals) setActuals(data.actuals);
+      if (data.yomiData) setYomiData(data.yomiData);
+      if (data.yomiFields) setYomiFields(data.yomiFields);
+      if (data.reportHistory) setReportHistory(data.reportHistory);
+    }
   }, []);
 
-  useEffect(() => { localStorage.setItem('topperformer_history', JSON.stringify(reportHistory)); }, [reportHistory]);
-  useEffect(() => { localStorage.setItem('topperformer_budgets', JSON.stringify(budgets)); }, [budgets]);
-  useEffect(() => { localStorage.setItem('topperformer_actuals', JSON.stringify(actuals)); }, [actuals]);
-  useEffect(() => { localStorage.setItem('topperformer_kpi_items', JSON.stringify(kpiItems)); }, [kpiItems]);
-  useEffect(() => { localStorage.setItem('topperformer_yomi_data', JSON.stringify(yomiData)); }, [yomiData]);
-  useEffect(() => { localStorage.setItem('topperformer_yomi_fields', JSON.stringify(yomiFields)); }, [yomiFields]);
+  useEffect(() => {
+    localStorage.setItem('topperformer_data_v2', JSON.stringify({
+      kpiSettings, actuals, yomiData, yomiFields, reportHistory
+    }));
+  }, [kpiSettings, actuals, yomiData, yomiFields, reportHistory]);
 
   const handleLogin = () => {
     if (loginPassword === LOGIN_PASSWORD) {
@@ -217,109 +351,86 @@ export default function App() {
     setShowUserSelect(false);
   };
 
-  const handleReportTypeChange = (typeId) => { 
-    setSelectedReportType(typeId); 
-    setReportContent(''); 
-  };
-
-  const extractAndUpdateActuals = (content) => {
-    const newActuals = { ...currentActual };
-    let updated = false;
-    kpiItems.forEach(item => {
-      const patterns = [
-        new RegExp(`${item.name}[：:]*\\s*(\\d+)`, 'i'),
-        new RegExp(`${item.name.replace('数', '')}[：:]*\\s*(\\d+)`, 'i'),
-      ];
-      for (const pattern of patterns) {
-        const match = content.match(pattern);
-        if (match) {
-          newActuals[item.id] = (newActuals[item.id] || 0) + parseInt(match[1]);
-          updated = true;
-          break;
-        }
-      }
-    });
-    if (updated) setActuals(prev => ({ ...prev, [currentUserId]: newActuals }));
-  };
-
   const handleSubmitReport = async () => {
     if (!reportContent.trim()) return;
     setIsLoading(true); setAiResponse('');
     
-    let budgetInfo = `\n\n【${currentUser.name}さんの現在の状況】`;
-    kpiItems.forEach(item => {
-      const target = currentBudget[item.id] || 0;
-      const actual = currentActual[item.id] || 0;
-      budgetInfo += `\n・${item.name}目標: ${target}${item.unit} / 実績: ${actual}${item.unit}`;
-    });
-    
-    if (currentYomiList.length > 0) {
-      budgetInfo += `\n\n【現在のヨミ表】`;
-      currentYomiList.forEach(yomi => {
-        const status = YOMI_STATUS.find(s => s.id === yomi.status);
-        const daysUntil = getDaysUntil(yomi.closingDate);
-        let dateInfo = '';
-        if (daysUntil !== null) {
-          dateInfo = daysUntil < 0 ? `（${Math.abs(daysUntil)}日超過）` : daysUntil === 0 ? '（本日）' : `（残${daysUntil}日）`;
-        }
-        budgetInfo += `\n・${yomi.companyName || '未入力'}: ${status?.label || '未設定'} ${dateInfo}`;
-      });
-    }
+    const systemPrompt = createAIPrompt(currentUser, currentKpiSettings, currentKpiCalc, currentActual, currentYomiList);
     
     try {
       const response = await fetch(`${GEMINI_API_ENDPOINT}?key=${GEMINI_API_KEY}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          contents: [{ parts: [{ text: `${AI_SYSTEM_PROMPT}${budgetInfo}\n\n【${currentUser.name}さんからの報告】\n${reportContent}` }] }], 
-          generationConfig: { temperature: 0.8, maxOutputTokens: 1024 } 
+          contents: [{ parts: [{ text: `${systemPrompt}\n\n【${currentUser.name}からの報告】\n${reportContent}` }] }], 
+          generationConfig: { temperature: 0.7, maxOutputTokens: 1500 } 
         })
       });
       const data = await response.json();
       if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
         const aiText = data.candidates[0].content.parts[0].text;
         setAiResponse(aiText);
-        extractAndUpdateActuals(reportContent);
         setReportHistory(prev => [{ id: Date.now(), user: currentUser.name, userId: currentUserId, type: selectedReportType, content: reportContent, aiResponse: aiText, timestamp: new Date().toISOString() }, ...prev].slice(0, 50));
-      } else if (data.error) {
-        setAiResponse(`エラー: ${data.error.message}`);
-      } else { 
-        setAiResponse('エラー: AIからの応答を取得できませんでした。'); 
+      } else {
+        setAiResponse('エラー: AIからの応答を取得できませんでした。');
       }
     } catch (error) { setAiResponse(`エラー: ${error.message}`); }
     finally { setIsLoading(false); }
   };
 
-  const openBudgetModal = () => {
-    setEditingKpiItems([...kpiItems]);
-    setEditingBudget({ ...currentBudget });
-    setShowBudgetModal(true);
+  // 管理者向け分析
+  const runManagerAnalysis = async () => {
+    setIsAnalyzing(true);
+    setManagerAnalysis('');
+    
+    const teamData = USERS.map(user => ({
+      ...user,
+      kpiSettings: kpiSettings[user.id] || DEFAULT_KPI_SETTINGS,
+      kpiCalc: calculateKPI(kpiSettings[user.id] || DEFAULT_KPI_SETTINGS),
+      actual: actuals[user.id] || { calls: 0, meetings: 0, deals: 0, areas: 0 },
+      overdueCount: getOverdueYomis(user.id).length,
+    }));
+    
+    const prompt = createManagerAnalysisPrompt(teamData);
+    
+    try {
+      const response = await fetch(`${GEMINI_API_ENDPOINT}?key=${GEMINI_API_KEY}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: prompt }] }], 
+          generationConfig: { temperature: 0.7, maxOutputTokens: 2000 } 
+        })
+      });
+      const data = await response.json();
+      if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        setManagerAnalysis(data.candidates[0].content.parts[0].text);
+      }
+    } catch (error) { setManagerAnalysis(`エラー: ${error.message}`); }
+    finally { setIsAnalyzing(false); }
   };
 
-  const addKpiItem = () => setEditingKpiItems([...editingKpiItems, { id: `custom_${Date.now()}`, name: '', unit: '件' }]);
-  const removeKpiItem = (index) => setEditingKpiItems(editingKpiItems.filter((_, i) => i !== index));
-  const updateKpiItem = (index, field, value) => {
-    const newItems = [...editingKpiItems];
-    newItems[index] = { ...newItems[index], [field]: value };
-    setEditingKpiItems(newItems);
-  };
-  const updateBudgetValue = (itemId, value) => setEditingBudget({ ...editingBudget, [itemId]: parseInt(value) || 0 });
-  const saveBudget = () => {
-    const validItems = editingKpiItems.filter(item => item.name.trim() !== '');
-    setKpiItems(validItems);
-    setBudgets(prev => ({ ...prev, [currentUserId]: { ...editingBudget } }));
-    setShowBudgetModal(false);
+  // KPI設定
+  const openKpiSettingsModal = () => {
+    setEditingKpiSettings({ ...currentKpiSettings });
+    setShowKpiSettingsModal(true);
   };
 
+  const saveKpiSettings = () => {
+    setKpiSettings(prev => ({ ...prev, [currentUserId]: { ...editingKpiSettings } }));
+    setShowKpiSettingsModal(false);
+  };
+
+  // 実績修正
   const openActualModal = () => setShowActualModal(true);
-  const updateActualValue = (itemId, value) => setActuals(prev => ({ ...prev, [currentUserId]: { ...prev[currentUserId], [itemId]: parseInt(value) || 0 } }));
+  const updateActualValue = (field, value) => {
+    setActuals(prev => ({ ...prev, [currentUserId]: { ...prev[currentUserId], [field]: parseInt(value) || 0 } }));
+  };
   const resetActuals = () => {
     if (window.confirm('今月の実績をリセットしますか？')) {
-      const resetValues = {};
-      kpiItems.forEach(item => { resetValues[item.id] = 0; });
-      setActuals(prev => ({ ...prev, [currentUserId]: resetValues }));
+      setActuals(prev => ({ ...prev, [currentUserId]: { calls: 0, meetings: 0, deals: 0, areas: 0 } }));
     }
   };
 
+  // ヨミ表
   const openYomiModal = (yomi = null) => {
     if (yomi) {
       setEditingYomi({ ...yomi });
@@ -334,9 +445,8 @@ export default function App() {
 
   const updateYomiField = (fieldId, value) => {
     const updated = { ...editingYomi, [fieldId]: value };
-    if (fieldId === 'monthlyFee' || fieldId === 'areaCount') {
-      const monthlyFee = fieldId === 'monthlyFee' ? parseInt(value) || 0 : parseInt(editingYomi.monthlyFee) || 0;
-      updated.totalAmount = monthlyFee * 12;
+    if (fieldId === 'monthlyFee') {
+      updated.totalAmount = (parseInt(value) || 0) * 12;
     }
     setEditingYomi(updated);
   };
@@ -356,7 +466,7 @@ export default function App() {
   };
 
   const deleteYomi = (yomiId) => {
-    if (!window.confirm('この案件を削除しますか？')) return;
+    if (!window.confirm('削除しますか？')) return;
     setYomiData(prev => {
       const monthData = prev[selectedYomiMonth] || {};
       const userList = monthData[currentUserId] || [];
@@ -367,18 +477,6 @@ export default function App() {
   const openYomiSettingsModal = () => {
     setEditingYomiFields([...yomiFields]);
     setShowYomiSettingsModal(true);
-  };
-
-  const addYomiField = () => setEditingYomiFields([...editingYomiFields, { id: `custom_${Date.now()}`, name: '', type: 'text', unit: '' }]);
-  const removeYomiField = (index) => setEditingYomiFields(editingYomiFields.filter((_, i) => i !== index));
-  const updateYomiFieldSetting = (index, field, value) => {
-    const newFields = [...editingYomiFields];
-    newFields[index] = { ...newFields[index], [field]: value };
-    setEditingYomiFields(newFields);
-  };
-  const saveYomiSettings = () => {
-    setYomiFields(editingYomiFields.filter(f => f.name.trim() !== ''));
-    setShowYomiSettingsModal(false);
   };
 
   const handleManagerAccess = () => { 
@@ -393,44 +491,30 @@ export default function App() {
       setManagerPassword(''); 
     } else alert('パスワードが正しくありません'); 
   };
-  
-  const handleShare = () => { 
-    navigator.clipboard.writeText(`【${REPORT_TYPES[selectedReportType].label}】\n${reportContent}\n\n【AIマネージャーからのフィードバック】\n${aiResponse}`); 
-    alert('クリップボードにコピーしました！'); 
-  };
-  
+
   const calculateProgress = (current, target) => target > 0 ? Math.min((current / target) * 100, 100) : 0;
-  const generateOptions = (current, max = 200) => {
-    const options = [];
-    for (let i = 0; i <= max; i++) options.push(i);
-    if (current > max) options.push(current);
-    return options;
-  };
+  const generateOptions = (max = 500) => [...Array(max + 1)].map((_, i) => i);
 
   const getYomiSummary = () => {
     const list = yomiData[selectedYomiMonth]?.[currentUserId] || [];
-    const summary = { A: 0, B: 0, C: 0, won: 0, lost: 0, totalAmount: 0, wonAmount: 0 };
-    list.forEach(y => {
-      if (y.status) summary[y.status] = (summary[y.status] || 0) + 1;
-      summary.totalAmount += y.totalAmount || 0;
-      if (y.status === 'won') summary.wonAmount += y.totalAmount || 0;
-    });
-    return summary;
+    return list.reduce((acc, y) => {
+      acc[y.status] = (acc[y.status] || 0) + 1;
+      acc.totalAmount = (acc.totalAmount || 0) + (y.totalAmount || 0);
+      if (y.status === 'won') acc.wonAmount = (acc.wonAmount || 0) + (y.totalAmount || 0);
+      return acc;
+    }, { A: 0, B: 0, C: 0, won: 0, lost: 0, totalAmount: 0, wonAmount: 0 });
   };
 
-  // チームデータ（管理者ビュー用）
   const getTeamData = () => {
-    const month = getCurrentYearMonth();
     return USERS.map(user => {
-      const budget = budgets[user.id] || {};
-      const actual = actuals[user.id] || {};
-      const yomis = yomiData[month]?.[user.id] || [];
-      const areaRegRate = budget.areaReg > 0 ? Math.round((actual.areaReg / budget.areaReg) * 100) : 0;
-      const dealsRate = budget.deals > 0 ? Math.round((actual.deals / budget.deals) * 100) : 0;
+      const settings = kpiSettings[user.id] || DEFAULT_KPI_SETTINGS;
+      const calc = calculateKPI(settings);
+      const actual = actuals[user.id] || { calls: 0, meetings: 0, deals: 0, areas: 0 };
+      const dealsRate = calc.targetDeals > 0 ? Math.round((actual.deals / calc.targetDeals) * 100) : 0;
       let status = 'good';
       if (dealsRate < 50) status = 'critical';
       else if (dealsRate < 80) status = 'warning';
-      return { ...user, actual, budget, areaRegRate, dealsRate, status, yomis, overdueCount: getOverdueYomis(user.id).length };
+      return { ...user, kpiSettings: settings, kpiCalc: calc, actual, dealsRate, status, overdueCount: getOverdueYomis(user.id).length };
     });
   };
 
@@ -443,132 +527,116 @@ export default function App() {
     loginButton: { width: '100%', padding: '14px', border: 'none', borderRadius: '8px', backgroundColor: '#2563EB', color: 'white', fontSize: '16px', fontWeight: '600', cursor: 'pointer' },
     loginError: { color: '#DC2626', fontSize: '14px', marginBottom: '16px' },
     container: { minHeight: '100vh', backgroundColor: '#F8FAFC', fontFamily: "'Noto Sans JP', sans-serif" },
-    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 24px', backgroundColor: 'white', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 0, zIndex: 100, flexWrap: 'wrap', gap: '8px' },
-    logo: { display: 'flex', alignItems: 'center', gap: '12px' },
-    logoText: { display: 'flex', flexDirection: 'column' },
-    logoTitle: { fontSize: '18px', fontWeight: '700', color: '#1E293B' },
-    logoSubtitle: { fontSize: '11px', color: '#64748B' },
-    headerRight: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
-    logoutButton: { padding: '8px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', backgroundColor: 'white', color: '#64748B', fontSize: '13px', cursor: 'pointer' },
-    shareButton: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: '#2563EB', cursor: 'pointer' },
-    viewToggle: { display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', backgroundColor: 'white', color: '#64748B', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },
+    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px', backgroundColor: 'white', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 0, zIndex: 100, flexWrap: 'wrap', gap: '8px' },
+    logo: { display: 'flex', alignItems: 'center', gap: '10px' },
+    logoTitle: { fontSize: '16px', fontWeight: '700', color: '#1E293B' },
+    headerRight: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' },
+    logoutButton: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #E2E8F0', backgroundColor: 'white', color: '#64748B', fontSize: '12px', cursor: 'pointer' },
+    viewToggle: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #E2E8F0', backgroundColor: 'white', color: '#64748B', fontSize: '12px', fontWeight: '500', cursor: 'pointer' },
     viewToggleActive: { backgroundColor: '#EFF6FF', borderColor: '#2563EB', color: '#2563EB' },
-    main: { padding: '24px', maxWidth: '1400px', margin: '0 auto' },
-    salesLayout: { display: 'grid', gridTemplateColumns: '380px 1fr', gap: '24px' },
-    leftColumn: { display: 'flex', flexDirection: 'column', gap: '20px' },
-    rightColumn: { display: 'flex', flexDirection: 'column', gap: '20px' },
-    card: { backgroundColor: 'white', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden' },
-    cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid #F1F5F9' },
-    cardTitle: { fontSize: '15px', fontWeight: '600', color: '#334155' },
-    userBadge: { display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', backgroundColor: '#EFF6FF', borderRadius: '20px', fontSize: '13px', fontWeight: '500', color: '#2563EB', cursor: 'pointer' },
+    main: { padding: '16px', maxWidth: '1400px', margin: '0 auto' },
+    salesLayout: { display: 'grid', gridTemplateColumns: '340px 1fr', gap: '16px' },
+    leftColumn: { display: 'flex', flexDirection: 'column', gap: '12px' },
+    rightColumn: { display: 'flex', flexDirection: 'column', gap: '12px' },
+    card: { backgroundColor: 'white', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden' },
+    cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #F1F5F9' },
+    cardTitle: { fontSize: '14px', fontWeight: '600', color: '#334155' },
+    userBadge: { display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 8px', backgroundColor: '#EFF6FF', borderRadius: '12px', fontSize: '12px', fontWeight: '500', color: '#2563EB', cursor: 'pointer' },
     userDropdown: { position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', border: '1px solid #E2E8F0', overflow: 'hidden', zIndex: 50 },
-    userOption: { padding: '10px 16px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' },
+    userOption: { padding: '8px 12px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' },
     userOptionActive: { backgroundColor: '#EFF6FF' },
-    kpiList: { padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: '14px' },
-    kpiItem: { display: 'flex', flexDirection: 'column', gap: '4px' },
-    kpiHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-    kpiLabel: { fontSize: '13px', color: '#475569' },
-    kpiValues: { display: 'flex', alignItems: 'center', gap: '4px' },
-    kpiActual: { fontWeight: '600', color: '#1E293B', fontSize: '14px' },
-    kpiTarget: { fontWeight: '400', color: '#94A3B8', fontSize: '13px' },
+    // KPI逆算表示
+    kpiSection: { padding: '12px 16px' },
+    kpiTitle: { fontSize: '11px', fontWeight: '600', color: '#64748B', marginBottom: '8px', textTransform: 'uppercase' },
+    kpiGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' },
+    kpiBox: { padding: '8px', backgroundColor: '#F8FAFC', borderRadius: '6px' },
+    kpiBoxLabel: { fontSize: '10px', color: '#64748B' },
+    kpiBoxValue: { fontSize: '16px', fontWeight: '700', color: '#1E293B' },
+    kpiBoxTarget: { fontSize: '10px', color: '#94A3B8' },
+    // 進捗
+    progressSection: { padding: '12px 16px', borderTop: '1px solid #F1F5F9' },
+    progressItem: { marginBottom: '10px' },
+    progressHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
+    progressLabel: { fontSize: '12px', color: '#475569' },
+    progressValue: { fontSize: '12px', fontWeight: '600', color: '#1E293B' },
     progressBar: { height: '6px', backgroundColor: '#E2E8F0', borderRadius: '3px', overflow: 'hidden' },
-    progressFill: { height: '100%', borderRadius: '3px', transition: 'width 0.3s ease' },
-    budgetActions: { display: 'flex', gap: '6px', padding: '10px 20px', borderTop: '1px solid #F1F5F9', flexWrap: 'wrap' },
-    budgetButton: { flex: 1, padding: '6px', border: '1px solid #E2E8F0', borderRadius: '6px', backgroundColor: 'white', fontSize: '11px', cursor: 'pointer', color: '#64748B', minWidth: '60px' },
+    progressFill: { height: '100%', borderRadius: '3px', transition: 'width 0.3s' },
+    // アクションボタン
+    actions: { display: 'flex', gap: '6px', padding: '10px 16px', borderTop: '1px solid #F1F5F9' },
+    actionBtn: { flex: 1, padding: '6px', border: '1px solid #E2E8F0', borderRadius: '6px', backgroundColor: 'white', fontSize: '10px', cursor: 'pointer', color: '#64748B' },
     // ヨミ表
-    yomiHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid #F1F5F9', flexWrap: 'wrap', gap: '8px' },
-    yomiTitle: { fontSize: '15px', fontWeight: '600', color: '#334155' },
-    yomiMonthSelect: { padding: '4px 8px', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '12px', backgroundColor: 'white' },
-    yomiSummary: { display: 'flex', gap: '8px', padding: '10px 20px', backgroundColor: '#F8FAFC', flexWrap: 'wrap' },
-    yomiSummaryItem: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' },
-    yomiList: { padding: '10px 20px', maxHeight: '200px', overflowY: 'auto' },
-    yomiEmpty: { color: '#94A3B8', fontSize: '13px', textAlign: 'center', padding: '20px 0' },
-    yomiRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #F1F5F9', gap: '8px', flexWrap: 'wrap' },
-    yomiCompany: { fontSize: '13px', fontWeight: '500', color: '#334155', minWidth: '100px' },
-    yomiAmount: { fontSize: '12px', color: '#64748B' },
-    yomiDate: { fontSize: '11px', padding: '2px 6px', borderRadius: '4px' },
+    yomiHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #F1F5F9' },
+    yomiMonthSelect: { padding: '4px 8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '11px' },
+    yomiSummary: { display: 'flex', gap: '6px', padding: '8px 16px', backgroundColor: '#F8FAFC', flexWrap: 'wrap' },
+    yomiSummaryItem: { display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px' },
+    yomiList: { padding: '8px 16px', maxHeight: '160px', overflowY: 'auto' },
+    yomiEmpty: { color: '#94A3B8', fontSize: '12px', textAlign: 'center', padding: '16px 0' },
+    yomiRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F1F5F9', gap: '6px', flexWrap: 'wrap' },
+    yomiCompany: { fontSize: '12px', fontWeight: '500', color: '#334155', minWidth: '80px' },
+    yomiAmount: { fontSize: '11px', color: '#64748B' },
+    yomiDate: { fontSize: '10px', padding: '2px 4px', borderRadius: '3px' },
     yomiDateNormal: { backgroundColor: '#F3F4F6', color: '#6B7280' },
     yomiDateSoon: { backgroundColor: '#FEF3C7', color: '#92400E' },
     yomiDateOverdue: { backgroundColor: '#FEE2E2', color: '#DC2626' },
-    yomiStatus: { padding: '3px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: '500' },
-    yomiActions: { display: 'flex', gap: '4px' },
-    yomiEditBtn: { padding: '3px 6px', border: 'none', borderRadius: '4px', backgroundColor: '#EFF6FF', color: '#2563EB', fontSize: '10px', cursor: 'pointer' },
-    yomiDeleteBtn: { padding: '3px 6px', border: 'none', borderRadius: '4px', backgroundColor: '#FEE2E2', color: '#DC2626', fontSize: '10px', cursor: 'pointer' },
-    yomiFooter: { display: 'flex', gap: '8px', padding: '10px 20px', borderTop: '1px solid #F1F5F9' },
-    yomiAddBtn: { flex: 1, padding: '8px', border: '1px dashed #E2E8F0', borderRadius: '8px', backgroundColor: 'transparent', color: '#64748B', fontSize: '12px', cursor: 'pointer' },
-    yomiSettingsBtn: { padding: '8px 12px', border: '1px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#64748B', fontSize: '12px', cursor: 'pointer' },
+    yomiStatus: { padding: '2px 6px', borderRadius: '8px', fontSize: '9px', fontWeight: '500' },
+    yomiActions: { display: 'flex', gap: '3px' },
+    yomiBtn: { padding: '2px 5px', border: 'none', borderRadius: '3px', fontSize: '9px', cursor: 'pointer' },
+    yomiFooter: { display: 'flex', gap: '6px', padding: '8px 16px', borderTop: '1px solid #F1F5F9' },
+    yomiAddBtn: { flex: 1, padding: '6px', border: '1px dashed #E2E8F0', borderRadius: '6px', backgroundColor: 'transparent', color: '#64748B', fontSize: '11px', cursor: 'pointer' },
     // 通知
-    alertBox: { margin: '0 20px 10px', padding: '10px 14px', backgroundColor: '#FEE2E2', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' },
-    alertIcon: { fontSize: '16px' },
-    alertText: { fontSize: '12px', color: '#DC2626', fontWeight: '500' },
-    // 履歴
-    historyList: { padding: '14px 20px', maxHeight: '120px', overflowY: 'auto' },
-    emptyHistory: { color: '#94A3B8', fontSize: '13px', textAlign: 'center', padding: '16px 0' },
-    historyItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: '1px solid #F1F5F9' },
-    historyIcon: { fontSize: '16px' },
-    historyContent: { display: 'flex', flexDirection: 'column', gap: '2px' },
-    historyType: { fontSize: '12px', fontWeight: '500', color: '#334155' },
-    historyDate: { fontSize: '10px', color: '#94A3B8' },
+    alertBox: { margin: '0 0 12px', padding: '8px 12px', backgroundColor: '#FEE2E2', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#DC2626' },
     // AI応答
-    aiHeader: { display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 20px', borderBottom: '1px solid #F1F5F9' },
-    aiDot: { width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22C55E' },
-    aiTitle: { fontSize: '15px', fontWeight: '600', color: '#334155' },
-    aiResponseArea: { padding: '16px 20px', minHeight: '160px' },
-    loadingContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '120px', color: '#64748B', gap: '10px' },
-    loadingSpinner: { width: '28px', height: '28px', border: '3px solid #E2E8F0', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 1s linear infinite' },
-    aiResponseText: { fontSize: '14px', lineHeight: '1.6', color: '#334155', whiteSpace: 'pre-wrap' },
-    aiPlaceholder: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '120px', color: '#94A3B8', textAlign: 'center', gap: '10px', fontSize: '13px' },
+    aiHeader: { display: 'flex', alignItems: 'center', gap: '6px', padding: '12px 16px', borderBottom: '1px solid #F1F5F9' },
+    aiDot: { width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22C55E' },
+    aiTitle: { fontSize: '14px', fontWeight: '600', color: '#334155' },
+    aiResponseArea: { padding: '14px 16px', minHeight: '140px', maxHeight: '300px', overflowY: 'auto' },
+    loadingContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100px', color: '#64748B', gap: '8px' },
+    loadingSpinner: { width: '24px', height: '24px', border: '2px solid #E2E8F0', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 1s linear infinite' },
+    aiResponseText: { fontSize: '13px', lineHeight: '1.6', color: '#334155', whiteSpace: 'pre-wrap' },
+    aiPlaceholder: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100px', color: '#94A3B8', fontSize: '12px' },
     // レポート入力
-    reportTabs: { display: 'flex', padding: '10px 14px', gap: '6px', borderBottom: '1px solid #F1F5F9', overflowX: 'auto' },
-    reportTab: { padding: '6px 12px', border: 'none', borderRadius: '16px', backgroundColor: 'transparent', color: '#64748B', fontSize: '12px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' },
+    reportTabs: { display: 'flex', padding: '8px 12px', gap: '4px', borderBottom: '1px solid #F1F5F9', overflowX: 'auto' },
+    reportTab: { padding: '5px 10px', border: 'none', borderRadius: '12px', backgroundColor: 'transparent', color: '#64748B', fontSize: '11px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap' },
     reportTabActive: { backgroundColor: '#2563EB', color: 'white' },
-    inputContainer: { padding: '14px 20px' },
-    textarea: { width: '100%', minHeight: '100px', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '10px', fontSize: '14px', lineHeight: '1.5', color: '#334155', resize: 'vertical', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' },
-    inputFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px', borderTop: '1px solid #F1F5F9', backgroundColor: '#FAFBFC', flexWrap: 'wrap', gap: '8px' },
-    footerText: { fontSize: '11px', color: '#94A3B8' },
-    submitButton: { display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', border: 'none', borderRadius: '8px', backgroundColor: '#2563EB', color: 'white', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
+    inputContainer: { padding: '12px 16px' },
+    textarea: { width: '100%', minHeight: '80px', padding: '10px', border: '1px solid #E2E8F0', borderRadius: '8px', fontSize: '13px', lineHeight: '1.5', color: '#334155', resize: 'vertical', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' },
+    inputFooter: { display: 'flex', justifyContent: 'flex-end', padding: '8px 16px', borderTop: '1px solid #F1F5F9', backgroundColor: '#FAFBFC' },
+    submitButton: { display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', border: 'none', borderRadius: '6px', backgroundColor: '#2563EB', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' },
     // 管理者
-    managerLayout: { display: 'flex', flexDirection: 'column', gap: '20px' },
-    managerCard: { backgroundColor: 'white', borderRadius: '16px', border: '1px solid #E2E8F0', padding: '20px', overflowX: 'auto' },
-    managerTitle: { fontSize: '16px', fontWeight: '600', color: '#1E293B', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' },
-    tableContainer: { overflowX: 'auto' },
-    table: { width: '100%', borderCollapse: 'collapse', minWidth: '900px' },
-    th: { padding: '10px 8px', backgroundColor: '#F8FAFC', fontSize: '11px', fontWeight: '600', color: '#64748B', textAlign: 'left', borderBottom: '1px solid #E2E8F0' },
-    td: { padding: '12px 8px', fontSize: '13px', color: '#334155', borderBottom: '1px solid #F1F5F9' },
-    statusBadge: { display: 'inline-block', padding: '3px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: '500' },
-    overdueAlert: { backgroundColor: '#FEE2E2', color: '#DC2626', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', marginLeft: '4px' },
-    // 担当者別ヨミ表
-    yomiSection: { marginTop: '16px' },
-    yomiUserHeader: { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0', borderBottom: '1px solid #E2E8F0', marginBottom: '8px' },
-    yomiUserName: { fontSize: '14px', fontWeight: '600', color: '#334155' },
-    yomiTable: { width: '100%', borderCollapse: 'collapse', marginBottom: '16px' },
-    yomiTh: { padding: '8px', backgroundColor: '#F8FAFC', fontSize: '11px', fontWeight: '600', color: '#64748B', textAlign: 'left' },
-    yomiTd: { padding: '8px', fontSize: '12px', color: '#334155', borderBottom: '1px solid #F1F5F9' },
+    managerLayout: { display: 'flex', flexDirection: 'column', gap: '16px' },
+    managerCard: { backgroundColor: 'white', borderRadius: '12px', border: '1px solid #E2E8F0', padding: '16px', overflowX: 'auto' },
+    managerTitle: { fontSize: '14px', fontWeight: '600', color: '#1E293B', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' },
+    table: { width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '12px' },
+    th: { padding: '8px 6px', backgroundColor: '#F8FAFC', fontWeight: '600', color: '#64748B', textAlign: 'left', borderBottom: '1px solid #E2E8F0' },
+    td: { padding: '10px 6px', color: '#334155', borderBottom: '1px solid #F1F5F9' },
+    statusBadge: { display: 'inline-block', padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: '500' },
+    overdueAlert: { backgroundColor: '#FEE2E2', color: '#DC2626', padding: '1px 4px', borderRadius: '3px', fontSize: '9px', marginLeft: '3px' },
+    analysisBtn: { padding: '8px 16px', border: 'none', borderRadius: '6px', backgroundColor: '#2563EB', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', marginBottom: '12px' },
+    analysisArea: { padding: '12px', backgroundColor: '#F8FAFC', borderRadius: '8px', fontSize: '13px', lineHeight: '1.6', whiteSpace: 'pre-wrap' },
     // モーダル
-    modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' },
-    modal: { backgroundColor: 'white', borderRadius: '16px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto' },
-    modalTitle: { fontSize: '18px', fontWeight: '600', color: '#1E293B', marginBottom: '16px' },
-    modalText: { fontSize: '14px', color: '#64748B', marginBottom: '16px' },
-    modalInput: { width: '100%', padding: '10px 12px', border: '1px solid #E2E8F0', borderRadius: '8px', fontSize: '14px', outline: 'none', boxSizing: 'border-box' },
-    modalSelect: { width: '100%', padding: '10px 12px', border: '1px solid #E2E8F0', borderRadius: '8px', fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'white' },
-    modalLabel: { fontSize: '13px', color: '#64748B', marginBottom: '4px', display: 'block' },
-    modalButtons: { display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' },
-    modalCancel: { padding: '10px 16px', border: '1px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#64748B', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
-    modalConfirm: { padding: '10px 16px', border: 'none', borderRadius: '8px', backgroundColor: '#2563EB', color: 'white', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
-    addButton: { padding: '8px 16px', border: '1px dashed #E2E8F0', borderRadius: '8px', backgroundColor: 'transparent', color: '#64748B', fontSize: '13px', cursor: 'pointer', width: '100%', marginTop: '8px' },
-    removeButton: { padding: '6px 8px', border: 'none', borderRadius: '6px', backgroundColor: '#FEE2E2', color: '#DC2626', fontSize: '11px', cursor: 'pointer' },
-    kpiEditRow: { display: 'grid', gridTemplateColumns: '1fr 60px 80px 32px', gap: '8px', alignItems: 'center', marginBottom: '8px' },
-    fieldEditRow: { display: 'grid', gridTemplateColumns: '1fr 70px 50px 32px', gap: '8px', alignItems: 'center', marginBottom: '8px' },
-    formGroup: { marginBottom: '14px' },
+    modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' },
+    modal: { backgroundColor: 'white', borderRadius: '12px', padding: '20px', maxWidth: '450px', width: '100%', maxHeight: '85vh', overflowY: 'auto' },
+    modalTitle: { fontSize: '16px', fontWeight: '600', color: '#1E293B', marginBottom: '12px' },
+    modalText: { fontSize: '12px', color: '#64748B', marginBottom: '12px' },
+    modalInput: { width: '100%', padding: '8px 10px', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' },
+    modalSelect: { width: '100%', padding: '8px 10px', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'white' },
+    modalLabel: { fontSize: '11px', color: '#64748B', marginBottom: '3px', display: 'block' },
+    modalButtons: { display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' },
+    modalCancel: { padding: '8px 12px', border: '1px solid #E2E8F0', borderRadius: '6px', backgroundColor: 'white', color: '#64748B', fontSize: '12px', cursor: 'pointer' },
+    modalConfirm: { padding: '8px 12px', border: 'none', borderRadius: '6px', backgroundColor: '#2563EB', color: 'white', fontSize: '12px', cursor: 'pointer' },
+    formGroup: { marginBottom: '12px' },
+    formRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' },
+    kpiSettingSection: { marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #F1F5F9' },
+    kpiSettingTitle: { fontSize: '12px', fontWeight: '600', color: '#334155', marginBottom: '8px' },
   };
 
   if (!isLoggedIn) {
     return (
       <div style={styles.loginContainer}>
         <div style={styles.loginBox}>
-          <svg width="48" height="48" viewBox="0 0 32 32" fill="none" style={{margin: '0 auto 24px', display: 'block'}}><rect width="32" height="32" rx="8" fill="#2563EB"/><path d="M8 12h16M8 16h12M8 20h14M22 20l4-4-4-4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <svg width="40" height="40" viewBox="0 0 32 32" fill="none" style={{margin: '0 auto 20px', display: 'block'}}><rect width="32" height="32" rx="8" fill="#2563EB"/><path d="M8 12h16M8 16h12M8 20h14M22 20l4-4-4-4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
           <h1 style={styles.loginTitle}>TopPerformer</h1>
-          <p style={styles.loginSubtitle}>営業組織専用AIマネージャー</p>
+          <p style={styles.loginSubtitle}>KPI逆算型 営業マネジメントAI</p>
           {loginError && <p style={styles.loginError}>{loginError}</p>}
           <input type="password" style={styles.loginInput} placeholder="パスワード" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} />
           <button style={styles.loginButton} onClick={handleLogin}>ログイン</button>
@@ -581,38 +649,38 @@ export default function App() {
   const isCurrentMonth = selectedYomiMonth === getCurrentYearMonth();
   const overdueYomis = getOverdueYomis(currentUserId);
   const allOverdueYomis = getAllOverdueYomis();
+  
+  // 進捗率計算
+  const callsProgress = calculateProgress(currentActual.calls, currentKpiCalc.requiredCalls);
+  const meetingsProgress = calculateProgress(currentActual.meetings, currentKpiCalc.requiredMeetings);
+  const dealsProgress = calculateProgress(currentActual.deals, currentKpiCalc.targetDeals);
 
   return (
     <div style={styles.container}>
       <header style={styles.header}>
         <div style={styles.logo}>
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#2563EB"/><path d="M8 12h16M8 16h12M8 20h14M22 20l4-4-4-4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          <div style={styles.logoText}><span style={styles.logoTitle}>TopPerformer</span><span style={styles.logoSubtitle}>AI Sales Manager</span></div>
+          <svg width="28" height="28" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#2563EB"/><path d="M8 12h16M8 16h12M8 20h14M22 20l4-4-4-4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span style={styles.logoTitle}>TopPerformer</span>
         </div>
         <div style={styles.headerRight}>
           <button style={styles.logoutButton} onClick={handleLogout}>ログアウト</button>
-          <button style={styles.shareButton} onClick={handleShare} disabled={!aiResponse}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg></button>
-          <button style={{...styles.viewToggle, ...(viewMode === 'sales' ? styles.viewToggleActive : {})}} onClick={() => setViewMode('sales')}>営業担当</button>
+          <button style={{...styles.viewToggle, ...(viewMode === 'sales' ? styles.viewToggleActive : {})}} onClick={() => setViewMode('sales')}>営業</button>
           <button style={{...styles.viewToggle, ...(viewMode === 'manager' ? styles.viewToggleActive : {})}} onClick={handleManagerAccess}>管理者</button>
         </div>
       </header>
 
       <main style={styles.main}>
         {viewMode === 'sales' ? (
-          <div style={{...styles.salesLayout, gridTemplateColumns: window.innerWidth <= 900 ? '1fr' : '360px 1fr'}}>
+          <div style={{...styles.salesLayout, gridTemplateColumns: window.innerWidth <= 900 ? '1fr' : '340px 1fr'}}>
             <div style={styles.leftColumn}>
-              {/* 期日超過通知 */}
               {overdueYomis.length > 0 && (
-                <div style={styles.alertBox}>
-                  <span style={styles.alertIcon}>⚠️</span>
-                  <span style={styles.alertText}>期日超過の案件が{overdueYomis.length}件あります</span>
-                </div>
+                <div style={styles.alertBox}>⚠️ 期日超過 {overdueYomis.length}件</div>
               )}
 
-              {/* 進捗状況 */}
+              {/* KPI逆算ダッシュボード */}
               <div style={styles.card}>
                 <div style={styles.cardHeader}>
-                  <span style={styles.cardTitle}>📊 進捗状況</span>
+                  <span style={styles.cardTitle}>📊 KPI逆算</span>
                   <div style={{position: 'relative'}}>
                     <div style={styles.userBadge} onClick={() => setShowUserSelect(!showUserSelect)}>
                       {currentUser.icon} {currentUser.name} ▼
@@ -621,45 +689,82 @@ export default function App() {
                       <div style={styles.userDropdown}>
                         {USERS.map(user => (
                           <div key={user.id} style={{...styles.userOption, ...(user.id === currentUserId ? styles.userOptionActive : {})}} onClick={() => handleUserChange(user.id)}>
-                            {user.icon} {user.name}{user.role && ` (${user.role})`}
+                            {user.icon} {user.name}
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
                 </div>
-                <div style={styles.kpiList}>
-                  {kpiItems.map(item => {
-                    const target = currentBudget[item.id] || 0;
-                    const actual = currentActual[item.id] || 0;
-                    const progress = calculateProgress(actual, target);
-                    return (
-                      <div key={item.id} style={styles.kpiItem}>
-                        <div style={styles.kpiHeader}>
-                          <span style={styles.kpiLabel}>{item.name}</span>
-                          <div style={styles.kpiValues}>
-                            <span style={styles.kpiActual}>{actual}</span>
-                            <span style={styles.kpiTarget}>/ {target}{item.unit}</span>
-                          </div>
-                        </div>
-                        <div style={styles.progressBar}>
-                          <div style={{...styles.progressFill, width: `${progress}%`, backgroundColor: progress >= 100 ? '#22C55E' : progress >= 80 ? '#84CC16' : '#2563EB'}}/>
-                        </div>
-                      </div>
-                    );
-                  })}
+                
+                <div style={styles.kpiSection}>
+                  <div style={styles.kpiTitle}>月間目標（逆算）</div>
+                  <div style={styles.kpiGrid}>
+                    <div style={styles.kpiBox}>
+                      <div style={styles.kpiBoxLabel}>必要架電数</div>
+                      <div style={styles.kpiBoxValue}>{currentKpiCalc.requiredCalls}</div>
+                      <div style={styles.kpiBoxTarget}>件/月</div>
+                    </div>
+                    <div style={styles.kpiBox}>
+                      <div style={styles.kpiBoxLabel}>必要商談数</div>
+                      <div style={styles.kpiBoxValue}>{currentKpiCalc.requiredMeetings}</div>
+                      <div style={styles.kpiBoxTarget}>件/月</div>
+                    </div>
+                    <div style={styles.kpiBox}>
+                      <div style={styles.kpiBoxLabel}>目標受注数</div>
+                      <div style={styles.kpiBoxValue}>{currentKpiCalc.targetDeals}</div>
+                      <div style={styles.kpiBoxTarget}>件/月</div>
+                    </div>
+                    <div style={styles.kpiBox}>
+                      <div style={styles.kpiBoxLabel}>1日架電目標</div>
+                      <div style={styles.kpiBoxValue}>{currentKpiCalc.dailyRequiredCalls}</div>
+                      <div style={styles.kpiBoxTarget}>件/日（最大{currentKpiCalc.maxDailyCalls}）</div>
+                    </div>
+                  </div>
                 </div>
-                <div style={styles.budgetActions}>
-                  <button style={styles.budgetButton} onClick={openBudgetModal}>🎯 予算</button>
-                  <button style={styles.budgetButton} onClick={openActualModal}>✏️ 実績</button>
-                  <button style={styles.budgetButton} onClick={resetActuals}>🔄 リセット</button>
+
+                <div style={styles.progressSection}>
+                  <div style={styles.kpiTitle}>今月の進捗</div>
+                  <div style={styles.progressItem}>
+                    <div style={styles.progressHeader}>
+                      <span style={styles.progressLabel}>架電数</span>
+                      <span style={styles.progressValue}>{currentActual.calls} / {currentKpiCalc.requiredCalls}（{Math.round(callsProgress)}%）</span>
+                    </div>
+                    <div style={styles.progressBar}>
+                      <div style={{...styles.progressFill, width: `${callsProgress}%`, backgroundColor: callsProgress >= 80 ? '#22C55E' : callsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/>
+                    </div>
+                  </div>
+                  <div style={styles.progressItem}>
+                    <div style={styles.progressHeader}>
+                      <span style={styles.progressLabel}>商談数</span>
+                      <span style={styles.progressValue}>{currentActual.meetings} / {currentKpiCalc.requiredMeetings}（{Math.round(meetingsProgress)}%）</span>
+                    </div>
+                    <div style={styles.progressBar}>
+                      <div style={{...styles.progressFill, width: `${meetingsProgress}%`, backgroundColor: meetingsProgress >= 80 ? '#22C55E' : meetingsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/>
+                    </div>
+                  </div>
+                  <div style={styles.progressItem}>
+                    <div style={styles.progressHeader}>
+                      <span style={styles.progressLabel}>受注数</span>
+                      <span style={styles.progressValue}>{currentActual.deals} / {currentKpiCalc.targetDeals}（{Math.round(dealsProgress)}%）</span>
+                    </div>
+                    <div style={styles.progressBar}>
+                      <div style={{...styles.progressFill, width: `${dealsProgress}%`, backgroundColor: dealsProgress >= 80 ? '#22C55E' : dealsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={styles.actions}>
+                  <button style={styles.actionBtn} onClick={openKpiSettingsModal}>⚙️ KPI設定</button>
+                  <button style={styles.actionBtn} onClick={openActualModal}>✏️ 実績入力</button>
+                  <button style={styles.actionBtn} onClick={resetActuals}>🔄 リセット</button>
                 </div>
               </div>
 
               {/* ヨミ表 */}
               <div style={styles.card}>
                 <div style={styles.yomiHeader}>
-                  <span style={styles.yomiTitle}>📋 ヨミ表</span>
+                  <span style={styles.cardTitle}>📋 ヨミ表</span>
                   <select style={styles.yomiMonthSelect} value={selectedYomiMonth} onChange={(e) => setSelectedYomiMonth(e.target.value)}>
                     {getPast12Months().map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                   </select>
@@ -671,14 +776,10 @@ export default function App() {
                       <span>{yomiSummary[s.id] || 0}</span>
                     </div>
                   ))}
-                  <div style={styles.yomiSummaryItem}>
-                    <span style={{fontWeight: '600', fontSize: '11px'}}>受注:</span>
-                    <span style={{fontSize: '11px'}}>{yomiSummary.wonAmount.toLocaleString()}円</span>
-                  </div>
                 </div>
                 <div style={styles.yomiList}>
                   {currentYomiList.length === 0 ? (
-                    <p style={styles.yomiEmpty}>案件がありません</p>
+                    <p style={styles.yomiEmpty}>案件なし</p>
                   ) : (
                     currentYomiList.map(yomi => {
                       const status = YOMI_STATUS.find(s => s.id === yomi.status);
@@ -689,19 +790,14 @@ export default function App() {
                       else if (daysUntil !== null && daysUntil <= 3 && daysUntil >= 0) dateStyle = styles.yomiDateSoon;
                       return (
                         <div key={yomi.id} style={styles.yomiRow}>
-                          <span style={styles.yomiCompany}>{yomi.companyName || '未入力'}</span>
+                          <span style={styles.yomiCompany}>{yomi.companyName || '-'}</span>
                           <span style={styles.yomiAmount}>{(yomi.totalAmount || 0).toLocaleString()}円</span>
-                          {yomi.closingDate && (
-                            <span style={{...styles.yomiDate, ...dateStyle}}>
-                              {formatDate(yomi.closingDate)}
-                              {overdue && ' 超過'}
-                            </span>
-                          )}
+                          {yomi.closingDate && <span style={{...styles.yomiDate, ...dateStyle}}>{formatDate(yomi.closingDate)}</span>}
                           <span style={{...styles.yomiStatus, backgroundColor: status?.bgColor, color: status?.color}}>{status?.label}</span>
                           {isCurrentMonth && (
                             <div style={styles.yomiActions}>
-                              <button style={styles.yomiEditBtn} onClick={() => openYomiModal(yomi)}>編集</button>
-                              <button style={styles.yomiDeleteBtn} onClick={() => deleteYomi(yomi.id)}>削除</button>
+                              <button style={{...styles.yomiBtn, backgroundColor: '#EFF6FF', color: '#2563EB'}} onClick={() => openYomiModal(yomi)}>編集</button>
+                              <button style={{...styles.yomiBtn, backgroundColor: '#FEE2E2', color: '#DC2626'}} onClick={() => deleteYomi(yomi.id)}>削除</button>
                             </div>
                           )}
                         </div>
@@ -712,43 +808,23 @@ export default function App() {
                 {isCurrentMonth && (
                   <div style={styles.yomiFooter}>
                     <button style={styles.yomiAddBtn} onClick={() => openYomiModal()}>+ 案件追加</button>
-                    <button style={styles.yomiSettingsBtn} onClick={openYomiSettingsModal}>⚙️</button>
+                    <button style={{...styles.yomiAddBtn, flex: 'none', padding: '6px 10px'}} onClick={openYomiSettingsModal}>⚙️</button>
                   </div>
                 )}
-              </div>
-
-              {/* 履歴 */}
-              <div style={styles.card}>
-                <div style={styles.cardHeader}><span style={styles.cardTitle}>📝 最近のレポート</span></div>
-                <div style={styles.historyList}>
-                  {reportHistory.filter(r => r.userId === currentUserId).length === 0 ? (
-                    <p style={styles.emptyHistory}>履歴がありません</p>
-                  ) : (
-                    reportHistory.filter(r => r.userId === currentUserId).slice(0, 4).map(report => (
-                      <div key={report.id} style={styles.historyItem}>
-                        <span style={styles.historyIcon}>{REPORT_TYPES[report.type]?.icon || '📝'}</span>
-                        <div style={styles.historyContent}>
-                          <span style={styles.historyType}>{REPORT_TYPES[report.type]?.label}</span>
-                          <span style={styles.historyDate}>{new Date(report.timestamp).toLocaleDateString('ja-JP')}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
               </div>
             </div>
 
             <div style={styles.rightColumn}>
               {/* AI応答 */}
               <div style={styles.card}>
-                <div style={styles.aiHeader}><span style={styles.aiDot}></span><span style={styles.aiTitle}>AIマネージャー</span></div>
+                <div style={styles.aiHeader}><span style={styles.aiDot}></span><span style={styles.aiTitle}>AIマネージャー（厳格モード）</span></div>
                 <div style={styles.aiResponseArea}>
                   {isLoading ? (
-                    <div style={styles.loadingContainer}><div style={styles.loadingSpinner}></div><p>分析中...</p></div>
+                    <div style={styles.loadingContainer}><div style={styles.loadingSpinner}></div><p style={{fontSize: '12px'}}>分析中...</p></div>
                   ) : aiResponse ? (
                     <div style={styles.aiResponseText}>{aiResponse}</div>
                   ) : (
-                    <div style={styles.aiPlaceholder}><p>レポートを提出するとフィードバックします</p></div>
+                    <div style={styles.aiPlaceholder}>報告を提出するとフィードバックします</div>
                   )}
                 </div>
               </div>
@@ -757,16 +833,15 @@ export default function App() {
               <div style={styles.card}>
                 <div style={styles.reportTabs}>
                   {Object.values(REPORT_TYPES).map(type => (
-                    <button key={type.id} style={{...styles.reportTab, ...(selectedReportType === type.id ? styles.reportTabActive : {})}} onClick={() => handleReportTypeChange(type.id)}>{type.label}</button>
+                    <button key={type.id} style={{...styles.reportTab, ...(selectedReportType === type.id ? styles.reportTabActive : {})}} onClick={() => setSelectedReportType(type.id)}>{type.label}</button>
                   ))}
                 </div>
                 <div style={styles.inputContainer}>
-                  <textarea style={styles.textarea} value={reportContent} onChange={(e) => setReportContent(e.target.value)} placeholder="自由に報告・相談を入力してください" />
+                  <textarea style={styles.textarea} value={reportContent} onChange={(e) => setReportContent(e.target.value)} placeholder="今日の架電数、商談数、課題などを報告してください" />
                 </div>
                 <div style={styles.inputFooter}>
-                  <p style={styles.footerText}>行動量と計画を分析します</p>
                   <button style={styles.submitButton} onClick={handleSubmitReport} disabled={isLoading}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                     提出
                   </button>
                 </div>
@@ -775,60 +850,63 @@ export default function App() {
           </div>
         ) : (
           <div style={styles.managerLayout}>
-            {/* 期日超過通知 */}
             {allOverdueYomis.length > 0 && (
-              <div style={{...styles.alertBox, margin: 0}}>
-                <span style={styles.alertIcon}>⚠️</span>
-                <span style={styles.alertText}>
-                  期日超過の案件: {allOverdueYomis.map(y => `${y.userName}/${y.companyName}`).join(', ')}
-                </span>
-              </div>
+              <div style={styles.alertBox}>⚠️ 期日超過: {allOverdueYomis.map(y => `${y.userName}/${y.companyName}`).join(', ')}</div>
             )}
 
             {/* チーム状況 */}
             <div style={styles.managerCard}>
-              <h2 style={styles.managerTitle}>👥 チーム状況</h2>
-              <div style={styles.tableContainer}>
+              <h2 style={styles.managerTitle}>👥 チーム状況（KPI逆算ベース）</h2>
+              <div style={{overflowX: 'auto'}}>
                 <table style={styles.table}>
                   <thead>
                     <tr>
                       <th style={styles.th}>メンバー</th>
-                      <th style={styles.th}>架電数</th>
-                      <th style={styles.th}>アポ獲得</th>
-                      <th style={styles.th}>エリア登録予算</th>
-                      <th style={styles.th}>エリア登録実績</th>
-                      <th style={styles.th}>エリア達成率</th>
-                      <th style={styles.th}>受注予算</th>
-                      <th style={styles.th}>受注実績</th>
-                      <th style={styles.th}>受注達成率</th>
+                      <th style={styles.th}>架電（実績/必要）</th>
+                      <th style={styles.th}>商談（実績/必要）</th>
+                      <th style={styles.th}>受注（実績/目標）</th>
+                      <th style={styles.th}>実績アポ率</th>
+                      <th style={styles.th}>実績受注率</th>
                       <th style={styles.th}>状態</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {getTeamData().map(member => (
-                      <tr key={member.id}>
-                        <td style={styles.td}>
-                          {member.icon} {member.name}
-                          {member.overdueCount > 0 && <span style={styles.overdueAlert}>⚠️{member.overdueCount}</span>}
-                        </td>
-                        <td style={styles.td}>{member.actual.calls || 0}/{member.budget.calls || 0}</td>
-                        <td style={styles.td}>{member.actual.appointments || 0}/{member.budget.appointments || 0}</td>
-                        <td style={styles.td}>{member.budget.areaReg || 0}件</td>
-                        <td style={styles.td}>{member.actual.areaReg || 0}件</td>
-                        <td style={styles.td}>{member.areaRegRate}%</td>
-                        <td style={styles.td}>{member.budget.deals || 0}件</td>
-                        <td style={styles.td}>{member.actual.deals || 0}件</td>
-                        <td style={styles.td}>{member.dealsRate}%</td>
-                        <td style={styles.td}>
-                          <span style={{...styles.statusBadge, backgroundColor: member.status === 'good' ? '#DEF7EC' : member.status === 'warning' ? '#FEF3C7' : '#FEE2E2', color: member.status === 'good' ? '#03543F' : member.status === 'warning' ? '#92400E' : '#991B1B'}}>
-                            {member.status === 'good' ? '良好' : member.status === 'warning' ? '要注意' : '要対応'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {getTeamData().map(member => {
+                      const actualAppRate = member.actual.calls > 0 ? ((member.actual.meetings / member.actual.calls) * 100).toFixed(1) : '-';
+                      const actualConvRate = member.actual.meetings > 0 ? ((member.actual.deals / member.actual.meetings) * 100).toFixed(1) : '-';
+                      return (
+                        <tr key={member.id}>
+                          <td style={styles.td}>
+                            {member.icon} {member.name}
+                            {member.overdueCount > 0 && <span style={styles.overdueAlert}>⚠️{member.overdueCount}</span>}
+                          </td>
+                          <td style={styles.td}>{member.actual.calls}/{member.kpiCalc.requiredCalls}</td>
+                          <td style={styles.td}>{member.actual.meetings}/{member.kpiCalc.requiredMeetings}</td>
+                          <td style={styles.td}>{member.actual.deals}/{member.kpiCalc.targetDeals}</td>
+                          <td style={styles.td}>{actualAppRate}%（目標{(member.kpiSettings.appointmentRate * 100).toFixed(0)}%）</td>
+                          <td style={styles.td}>{actualConvRate}%（目標{(member.kpiSettings.conversionRate * 100).toFixed(0)}%）</td>
+                          <td style={styles.td}>
+                            <span style={{...styles.statusBadge, backgroundColor: member.status === 'good' ? '#DEF7EC' : member.status === 'warning' ? '#FEF3C7' : '#FEE2E2', color: member.status === 'good' ? '#03543F' : member.status === 'warning' ? '#92400E' : '#991B1B'}}>
+                              {member.status === 'good' ? '良好' : member.status === 'warning' ? '要注意' : '要対応'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+            </div>
+
+            {/* AI分析 */}
+            <div style={styles.managerCard}>
+              <h2 style={styles.managerTitle}>🔍 ボトルネック分析</h2>
+              <button style={styles.analysisBtn} onClick={runManagerAnalysis} disabled={isAnalyzing}>
+                {isAnalyzing ? '分析中...' : 'AIでチームを分析'}
+              </button>
+              {managerAnalysis && (
+                <div style={styles.analysisArea}>{managerAnalysis}</div>
+              )}
             </div>
 
             {/* 担当者別ヨミ表 */}
@@ -837,22 +915,18 @@ export default function App() {
               {USERS.map(user => {
                 const userYomis = yomiData[getCurrentYearMonth()]?.[user.id] || [];
                 return (
-                  <div key={user.id} style={styles.yomiSection}>
-                    <div style={styles.yomiUserHeader}>
-                      <span>{user.icon}</span>
-                      <span style={styles.yomiUserName}>{user.name}</span>
-                      <span style={{fontSize: '12px', color: '#64748B'}}>（{userYomis.length}件）</span>
-                    </div>
+                  <div key={user.id} style={{marginBottom: '16px'}}>
+                    <div style={{fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '8px'}}>{user.icon} {user.name}（{userYomis.length}件）</div>
                     {userYomis.length === 0 ? (
-                      <p style={{...styles.emptyHistory, padding: '10px 0'}}>案件なし</p>
+                      <p style={{fontSize: '11px', color: '#94A3B8'}}>案件なし</p>
                     ) : (
-                      <table style={styles.yomiTable}>
+                      <table style={{...styles.table, minWidth: '400px'}}>
                         <thead>
                           <tr>
-                            <th style={styles.yomiTh}>会社名</th>
-                            <th style={styles.yomiTh}>受注金額</th>
-                            <th style={styles.yomiTh}>クロージング日</th>
-                            <th style={styles.yomiTh}>ステータス</th>
+                            <th style={styles.th}>会社名</th>
+                            <th style={styles.th}>金額</th>
+                            <th style={styles.th}>期日</th>
+                            <th style={styles.th}>状態</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -861,15 +935,10 @@ export default function App() {
                             const overdue = isOverdue(yomi.closingDate) && !['won', 'lost'].includes(yomi.status);
                             return (
                               <tr key={yomi.id}>
-                                <td style={styles.yomiTd}>{yomi.companyName || '-'}</td>
-                                <td style={styles.yomiTd}>{(yomi.totalAmount || 0).toLocaleString()}円</td>
-                                <td style={styles.yomiTd}>
-                                  {yomi.closingDate ? formatDate(yomi.closingDate) : '-'}
-                                  {overdue && <span style={styles.overdueAlert}>超過</span>}
-                                </td>
-                                <td style={styles.yomiTd}>
-                                  <span style={{...styles.statusBadge, backgroundColor: status?.bgColor, color: status?.color}}>{status?.label}</span>
-                                </td>
+                                <td style={styles.td}>{yomi.companyName || '-'}</td>
+                                <td style={styles.td}>{(yomi.totalAmount || 0).toLocaleString()}円</td>
+                                <td style={styles.td}>{yomi.closingDate ? formatDate(yomi.closingDate) : '-'}{overdue && <span style={styles.overdueAlert}>超過</span>}</td>
+                                <td style={styles.td}><span style={{...styles.statusBadge, backgroundColor: status?.bgColor, color: status?.color}}>{status?.label}</span></td>
                               </tr>
                             );
                           })}
@@ -884,55 +953,114 @@ export default function App() {
         )}
       </main>
 
-      {/* 管理者パスワードモーダル */}
+      {/* モーダル群 */}
       {showPasswordModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
             <h3 style={styles.modalTitle}>管理者パスワード</h3>
             <input type="password" style={styles.modalInput} placeholder="パスワード" value={managerPassword} onChange={(e) => setManagerPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && verifyManagerPassword()} />
             <div style={styles.modalButtons}>
-              <button style={styles.modalCancel} onClick={() => { setShowPasswordModal(false); setManagerPassword(''); }}>キャンセル</button>
+              <button style={styles.modalCancel} onClick={() => setShowPasswordModal(false)}>キャンセル</button>
               <button style={styles.modalConfirm} onClick={verifyManagerPassword}>ログイン</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 予算設定モーダル */}
-      {showBudgetModal && (
+      {showKpiSettingsModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
-            <h3 style={styles.modalTitle}>🎯 予算設定</h3>
-            {editingKpiItems.map((item, index) => (
-              <div key={item.id} style={styles.kpiEditRow}>
-                <input type="text" style={styles.modalInput} placeholder="項目名" value={item.name} onChange={(e) => updateKpiItem(index, 'name', e.target.value)} />
-                <input type="text" style={styles.modalInput} placeholder="単位" value={item.unit} onChange={(e) => updateKpiItem(index, 'unit', e.target.value)} />
-                <input type="number" style={styles.modalInput} placeholder="目標" value={editingBudget[item.id] || ''} onChange={(e) => updateBudgetValue(item.id, e.target.value)} />
-                <button style={styles.removeButton} onClick={() => removeKpiItem(index)}>✕</button>
+            <h3 style={styles.modalTitle}>⚙️ {currentUser.name}のKPI設定</h3>
+            <p style={styles.modalText}>予算→受注→商談→架電を逆算します</p>
+            
+            <div style={styles.kpiSettingSection}>
+              <div style={styles.kpiSettingTitle}>①営業KPI</div>
+              <div style={styles.formGroup}>
+                <label style={styles.modalLabel}>月間受注予算（円）</label>
+                <input type="number" style={styles.modalInput} value={editingKpiSettings.monthlyBudget} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, monthlyBudget: parseInt(e.target.value) || 0})} />
               </div>
-            ))}
-            <button style={styles.addButton} onClick={addKpiItem}>+ 項目追加</button>
+              <div style={styles.formRow}>
+                <div style={styles.formGroup}>
+                  <label style={styles.modalLabel}>平均受注単価（円）</label>
+                  <input type="number" style={styles.modalInput} value={editingKpiSettings.avgOrderPrice} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, avgOrderPrice: parseInt(e.target.value) || 0})} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.modalLabel}>受注率（%）</label>
+                  <input type="number" style={styles.modalInput} value={editingKpiSettings.conversionRate * 100} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, conversionRate: (parseFloat(e.target.value) || 0) / 100})} />
+                </div>
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.modalLabel}>アポ率（%）</label>
+                <input type="number" style={styles.modalInput} value={editingKpiSettings.appointmentRate * 100} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, appointmentRate: (parseFloat(e.target.value) || 0) / 100})} />
+              </div>
+            </div>
+
+            <div style={styles.kpiSettingSection}>
+              <div style={styles.kpiSettingTitle}>②架電可能日数</div>
+              <div style={styles.formRow}>
+                <div style={styles.formGroup}>
+                  <label style={styles.modalLabel}>月内営業日数</label>
+                  <input type="number" style={styles.modalInput} value={editingKpiSettings.monthlyWorkDays} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, monthlyWorkDays: parseInt(e.target.value) || 0})} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.modalLabel}>定休日数</label>
+                  <input type="number" style={styles.modalInput} value={editingKpiSettings.holidayDays} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, holidayDays: parseInt(e.target.value) || 0})} />
+                </div>
+              </div>
+            </div>
+
+            <div style={styles.kpiSettingSection}>
+              <div style={styles.kpiSettingTitle}>③日次KPI</div>
+              <div style={styles.formRow}>
+                <div style={styles.formGroup}>
+                  <label style={styles.modalLabel}>1日架電可能時間（分）</label>
+                  <input type="number" style={styles.modalInput} value={editingKpiSettings.dailyCallTime} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, dailyCallTime: parseInt(e.target.value) || 0})} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.modalLabel}>1架電あたり時間（分）</label>
+                  <input type="number" style={styles.modalInput} value={editingKpiSettings.timePerCall} onChange={(e) => setEditingKpiSettings({...editingKpiSettings, timePerCall: parseInt(e.target.value) || 0})} />
+                </div>
+              </div>
+            </div>
+
+            {/* 計算結果プレビュー */}
+            <div style={{padding: '10px', backgroundColor: '#F8FAFC', borderRadius: '6px', fontSize: '11px'}}>
+              <strong>計算結果:</strong><br/>
+              必要架電数: {calculateKPI(editingKpiSettings).requiredCalls}件/月<br/>
+              1日あたり: {calculateKPI(editingKpiSettings).dailyRequiredCalls}件（最大{calculateKPI(editingKpiSettings).maxDailyCalls}件）
+              {!calculateKPI(editingKpiSettings).isAchievable && <span style={{color: '#DC2626'}}> ⚠️物理的に達成困難</span>}
+            </div>
+
             <div style={styles.modalButtons}>
-              <button style={styles.modalCancel} onClick={() => setShowBudgetModal(false)}>キャンセル</button>
-              <button style={styles.modalConfirm} onClick={saveBudget}>保存</button>
+              <button style={styles.modalCancel} onClick={() => setShowKpiSettingsModal(false)}>キャンセル</button>
+              <button style={styles.modalConfirm} onClick={saveKpiSettings}>保存</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 実績修正モーダル */}
       {showActualModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
-            <h3 style={styles.modalTitle}>✏️ 実績修正</h3>
-            {kpiItems.map(item => (
-              <div key={item.id} style={styles.formGroup}>
-                <label style={styles.modalLabel}>{item.name}（{item.unit}）</label>
-                <select style={styles.modalSelect} value={currentActual[item.id] || 0} onChange={(e) => updateActualValue(item.id, e.target.value)}>
-                  {generateOptions(currentActual[item.id] || 0).map(num => <option key={num} value={num}>{num}</option>)}
-                </select>
-              </div>
-            ))}
+            <h3 style={styles.modalTitle}>✏️ 実績入力</h3>
+            <div style={styles.formGroup}>
+              <label style={styles.modalLabel}>架電数</label>
+              <select style={styles.modalSelect} value={currentActual.calls} onChange={(e) => updateActualValue('calls', e.target.value)}>
+                {generateOptions().map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.modalLabel}>商談数</label>
+              <select style={styles.modalSelect} value={currentActual.meetings} onChange={(e) => updateActualValue('meetings', e.target.value)}>
+                {generateOptions(100).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.modalLabel}>受注数</label>
+              <select style={styles.modalSelect} value={currentActual.deals} onChange={(e) => updateActualValue('deals', e.target.value)}>
+                {generateOptions(50).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
             <div style={styles.modalButtons}>
               <button style={styles.modalCancel} onClick={() => setShowActualModal(false)}>閉じる</button>
             </div>
@@ -940,19 +1068,18 @@ export default function App() {
         </div>
       )}
 
-      {/* ヨミ表入力モーダル */}
       {showYomiModal && editingYomi && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
             <h3 style={styles.modalTitle}>📋 案件入力</h3>
             {yomiFields.map(field => (
               <div key={field.id} style={styles.formGroup}>
-                <label style={styles.modalLabel}>{field.name}{field.unit && `（${field.unit}）`}</label>
+                <label style={styles.modalLabel}>{field.name}</label>
                 <input type={field.type === 'number' ? 'number' : 'text'} style={styles.modalInput} value={editingYomi[field.id] || ''} onChange={(e) => updateYomiField(field.id, e.target.value)} />
               </div>
             ))}
             <div style={styles.formGroup}>
-              <label style={styles.modalLabel}>受注金額（自動計算: 月額×12）</label>
+              <label style={styles.modalLabel}>受注金額（月額×12）</label>
               <input type="text" style={styles.modalInput} value={`${(editingYomi.totalAmount || 0).toLocaleString()}円`} readOnly />
             </div>
             <div style={styles.formGroup}>
@@ -966,33 +1093,44 @@ export default function App() {
               </select>
             </div>
             <div style={styles.modalButtons}>
-              <button style={styles.modalCancel} onClick={() => { setShowYomiModal(false); setEditingYomi(null); }}>キャンセル</button>
+              <button style={styles.modalCancel} onClick={() => setShowYomiModal(false)}>キャンセル</button>
               <button style={styles.modalConfirm} onClick={saveYomi}>保存</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ヨミ表設定モーダル */}
       {showYomiSettingsModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
             <h3 style={styles.modalTitle}>⚙️ ヨミ表項目設定</h3>
             {editingYomiFields.map((field, index) => (
-              <div key={field.id} style={styles.fieldEditRow}>
-                <input type="text" style={styles.modalInput} placeholder="項目名" value={field.name} onChange={(e) => updateYomiFieldSetting(index, 'name', e.target.value)} />
-                <select style={styles.modalSelect} value={field.type} onChange={(e) => updateYomiFieldSetting(index, 'type', e.target.value)}>
-                  <option value="text">テキスト</option>
+              <div key={field.id} style={{display: 'grid', gridTemplateColumns: '1fr 70px 50px 30px', gap: '6px', marginBottom: '8px'}}>
+                <input type="text" style={styles.modalInput} placeholder="項目名" value={field.name} onChange={(e) => {
+                  const newFields = [...editingYomiFields];
+                  newFields[index] = {...newFields[index], name: e.target.value};
+                  setEditingYomiFields(newFields);
+                }} />
+                <select style={styles.modalSelect} value={field.type} onChange={(e) => {
+                  const newFields = [...editingYomiFields];
+                  newFields[index] = {...newFields[index], type: e.target.value};
+                  setEditingYomiFields(newFields);
+                }}>
+                  <option value="text">文字</option>
                   <option value="number">数値</option>
                 </select>
-                <input type="text" style={styles.modalInput} placeholder="単位" value={field.unit || ''} onChange={(e) => updateYomiFieldSetting(index, 'unit', e.target.value)} />
-                <button style={styles.removeButton} onClick={() => removeYomiField(index)}>✕</button>
+                <input type="text" style={styles.modalInput} placeholder="単位" value={field.unit || ''} onChange={(e) => {
+                  const newFields = [...editingYomiFields];
+                  newFields[index] = {...newFields[index], unit: e.target.value};
+                  setEditingYomiFields(newFields);
+                }} />
+                <button style={{padding: '4px', border: 'none', borderRadius: '4px', backgroundColor: '#FEE2E2', color: '#DC2626', cursor: 'pointer'}} onClick={() => setEditingYomiFields(editingYomiFields.filter((_, i) => i !== index))}>✕</button>
               </div>
             ))}
-            <button style={styles.addButton} onClick={addYomiField}>+ 項目追加</button>
+            <button style={{width: '100%', padding: '6px', border: '1px dashed #E2E8F0', borderRadius: '6px', backgroundColor: 'transparent', color: '#64748B', fontSize: '11px', cursor: 'pointer', marginTop: '8px'}} onClick={() => setEditingYomiFields([...editingYomiFields, { id: `custom_${Date.now()}`, name: '', type: 'text', unit: '' }])}>+ 項目追加</button>
             <div style={styles.modalButtons}>
               <button style={styles.modalCancel} onClick={() => setShowYomiSettingsModal(false)}>キャンセル</button>
-              <button style={styles.modalConfirm} onClick={saveYomiSettings}>保存</button>
+              <button style={styles.modalConfirm} onClick={() => { setYomiFields(editingYomiFields.filter(f => f.name.trim())); setShowYomiSettingsModal(false); }}>保存</button>
             </div>
           </div>
         </div>
