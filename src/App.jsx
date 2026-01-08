@@ -817,7 +817,7 @@ export default function App() {
             <div style={styles.rightColumn}>
               {/* AI応答 */}
               <div style={styles.card}>
-                <div style={styles.aiHeader}><span style={styles.aiDot}></span><span style={styles.aiTitle}>AIマネージャー（厳格モード）</span></div>
+                <div style={styles.aiHeader}><span style={styles.aiDot}></span><span style={styles.aiTitle}>AIマネージャー</span></div>
                 <div style={styles.aiResponseArea}>
                   {isLoading ? (
                     <div style={styles.loadingContainer}><div style={styles.loadingSpinner}></div><p style={{fontSize: '12px'}}>分析中...</p></div>
