@@ -43,29 +43,23 @@ const YOMI_STATUS = [
 
 const extractDataFromReport = (content) => {
   const extracted = { calls: null, meetings: null, deals: null, yomis: [] };
-  
   const callMatch = content.match(/架電[：:\s]*(\d+)|(\d+)[件回].*架電|TEL[：:\s]*(\d+)|コール[：:\s]*(\d+)/i);
   if (callMatch) extracted.calls = parseInt(callMatch[1] || callMatch[2] || callMatch[3] || callMatch[4]);
-  
   const meetingMatch = content.match(/商談[：:\s]*(\d+)|(\d+)[件回].*商談|アポ[：:\s]*(\d+)|面談[：:\s]*(\d+)/i);
   if (meetingMatch) extracted.meetings = parseInt(meetingMatch[1] || meetingMatch[2] || meetingMatch[3] || meetingMatch[4]);
-  
   const dealMatch = content.match(/受注[：:\s]*(\d+)|(\d+)[件回].*受注|成約[：:\s]*(\d+)|契約[：:\s]*(\d+)/i);
   if (dealMatch) extracted.deals = parseInt(dealMatch[1] || dealMatch[2] || dealMatch[3] || dealMatch[4]);
-  
   const regex1 = /([ぁ-んァ-ヶー一-龠a-zA-Z0-9]+(?:会社|株式会社|有限会社|㈱|㈲|不動産|ホーム|ハウス|建設|工務店|企画|産業|商事)?)[：:\s、,→]+([ABC])ヨミ/gi;
   let match;
   while ((match = regex1.exec(content)) !== null) {
     if (match[1].length >= 2) extracted.yomis.push({ companyName: match[1], status: match[2].toUpperCase() });
   }
-  
   const regex2 = /([ぁ-んァ-ヶー一-龠a-zA-Z0-9]+(?:会社|株式会社|有限会社|㈱|㈲|不動産|ホーム|ハウス|建設|工務店|企画|産業|商事)?)[：:\s、,→]*(受注|失注)/gi;
   while ((match = regex2.exec(content)) !== null) {
     if (match[1].length >= 2 && !extracted.yomis.find(y => y.companyName === match[1])) {
       extracted.yomis.push({ companyName: match[1], status: match[2] === '受注' ? 'won' : 'lost' });
     }
   }
-  
   return extracted;
 };
 
@@ -89,23 +83,19 @@ const createAIPrompt = (user, kpiSettings, kpiCalc, actuals, yomis) => {
 ・必要商談数: ${kpiCalc.requiredMeetings}件（受注率${(kpiSettings.conversionRate * 100).toFixed(0)}%）
 ・必要架電数: ${kpiCalc.requiredCalls}件（アポ率${(kpiSettings.appointmentRate * 100).toFixed(0)}%）
 
-■日次目標
-・1日あたり必要架電数: ${kpiCalc.dailyRequiredCalls}件
-・1日最大架電可能数: ${kpiCalc.maxDailyCalls}件
+■日次目標: 1日あたり${kpiCalc.dailyRequiredCalls}件
 
 【現在の進捗】
 ・架電数: ${progress.calls}件 / ${kpiCalc.requiredCalls}件（${callsRate}%）
 ・商談数: ${progress.meetings}件 / ${kpiCalc.requiredMeetings}件（${meetingsRate}%）
 ・受注数: ${progress.deals}件 / ${kpiCalc.targetDeals}件（${dealsRate}%）
 
-【ヨミ表状況】
-・Aヨミ: ${yomiSummary.A || 0}件 / Bヨミ: ${yomiSummary.B || 0}件 / Cヨミ: ${yomiSummary.C || 0}件
-・受注済: ${yomiSummary.won || 0}件
+【ヨミ表】Aヨミ: ${yomiSummary.A || 0}件 / Bヨミ: ${yomiSummary.B || 0}件 / Cヨミ: ${yomiSummary.C || 0}件
 
-【フィードバックの原則】
-1. 📊 数値で現状を評価
-2. ❓ 厳しく深掘りする質問（1〜2個）
-3. 🔢 具体的な数字で指示
+【フィードバック原則】
+1. 📊 数値で現状評価
+2. ❓ 厳しく深掘り質問（1〜2個）
+3. 🔢 具体的数字で指示
 4. 🔥 言い訳を許さない
 
 営業マネージャーとして、${user.name}を目標達成に導いてください。`;
@@ -165,6 +155,21 @@ export default function App() {
 
   const getOverdueYomis = (userId) => (yomiData[getCurrentYearMonth()]?.[userId] || []).filter(y => y.closingDate && isOverdue(y.closingDate) && !['won', 'lost'].includes(y.status));
   const getAllOverdueYomis = () => { const overdues = []; USERS.forEach(user => getOverdueYomis(user.id).forEach(y => overdues.push({ ...y, userName: user.name }))); return overdues; };
+
+  const getRankingData = () => {
+    return USERS.map(user => {
+      const settings = kpiSettings[user.id] || DEFAULT_KPI_SETTINGS;
+      const calc = calculateKPI(settings);
+      const actual = actuals[user.id] || { calls: 0, meetings: 0, deals: 0 };
+      const callsRate = calc.requiredCalls > 0 ? Math.round((actual.calls / calc.requiredCalls) * 100) : 0;
+      const meetingsRate = calc.requiredMeetings > 0 ? Math.round((actual.meetings / calc.requiredMeetings) * 100) : 0;
+      const dealsRate = calc.targetDeals > 0 ? Math.round((actual.deals / calc.targetDeals) * 100) : 0;
+      const appRate = actual.calls > 0 ? ((actual.meetings / actual.calls) * 100).toFixed(1) : '0.0';
+      const convRate = actual.meetings > 0 ? ((actual.deals / actual.meetings) * 100).toFixed(1) : '0.0';
+      const overallScore = Math.round((callsRate * 0.3) + (meetingsRate * 0.3) + (dealsRate * 0.4));
+      return { ...user, actual, calc, callsRate, meetingsRate, dealsRate, appRate, convRate, overallScore };
+    }).sort((a, b) => b.overallScore - a.overallScore);
+  };
 
   useEffect(() => { if (sessionStorage.getItem('topperformer_logged_in') === 'true') setIsLoggedIn(true); }, []);
   useEffect(() => { const saved = localStorage.getItem('topperformer_data_v2'); if (saved) { const data = JSON.parse(saved); if (data.kpiSettings) setKpiSettings(data.kpiSettings); if (data.actuals) setActuals(data.actuals); if (data.yomiData) setYomiData(data.yomiData); if (data.yomiFields) setYomiFields(data.yomiFields); if (data.reportHistory) setReportHistory(data.reportHistory); } }, []);
@@ -306,15 +311,10 @@ export default function App() {
     yomiMonthSelect: { padding: '4px 8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '11px' },
     yomiSummary: { display: 'flex', gap: '6px', padding: '8px 16px', backgroundColor: '#F8FAFC', flexWrap: 'wrap' },
     yomiSummaryItem: { display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px' },
-    yomiList: { padding: '8px 16px', maxHeight: '160px', overflowY: 'auto' },
+    yomiList: { padding: '8px 16px', maxHeight: '140px', overflowY: 'auto' },
     yomiEmpty: { color: '#94A3B8', fontSize: '12px', textAlign: 'center', padding: '16px 0' },
     yomiRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F1F5F9', gap: '6px', flexWrap: 'wrap' },
     yomiCompany: { fontSize: '12px', fontWeight: '500', color: '#334155', minWidth: '80px' },
-    yomiAmount: { fontSize: '11px', color: '#64748B' },
-    yomiDate: { fontSize: '10px', padding: '2px 4px', borderRadius: '3px' },
-    yomiDateNormal: { backgroundColor: '#F3F4F6', color: '#6B7280' },
-    yomiDateSoon: { backgroundColor: '#FEF3C7', color: '#92400E' },
-    yomiDateOverdue: { backgroundColor: '#FEE2E2', color: '#DC2626' },
     yomiStatus: { padding: '2px 6px', borderRadius: '8px', fontSize: '9px', fontWeight: '500' },
     yomiActions: { display: 'flex', gap: '3px' },
     yomiBtn: { padding: '2px 5px', border: 'none', borderRadius: '3px', fontSize: '9px', cursor: 'pointer' },
@@ -324,7 +324,7 @@ export default function App() {
     aiHeader: { display: 'flex', alignItems: 'center', gap: '6px', padding: '12px 16px', borderBottom: '1px solid #F1F5F9' },
     aiDot: { width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22C55E' },
     aiTitle: { fontSize: '14px', fontWeight: '600', color: '#334155' },
-    aiResponseArea: { padding: '14px 16px', minHeight: '140px', maxHeight: '300px', overflowY: 'auto' },
+    aiResponseArea: { padding: '14px 16px', minHeight: '120px', maxHeight: '250px', overflowY: 'auto' },
     loadingContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100px', color: '#64748B', gap: '8px' },
     loadingSpinner: { width: '24px', height: '24px', border: '2px solid #E2E8F0', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 1s linear infinite' },
     aiResponseText: { fontSize: '13px', lineHeight: '1.6', color: '#334155', whiteSpace: 'pre-wrap' },
@@ -336,6 +336,38 @@ export default function App() {
     textarea: { width: '100%', minHeight: '80px', padding: '10px', border: '1px solid #E2E8F0', borderRadius: '8px', fontSize: '13px', lineHeight: '1.5', color: '#334155', resize: 'vertical', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' },
     inputFooter: { display: 'flex', justifyContent: 'flex-end', padding: '8px 16px', borderTop: '1px solid #F1F5F9', backgroundColor: '#FAFBFC' },
     submitButton: { display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', border: 'none', borderRadius: '6px', backgroundColor: '#2563EB', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' },
+    // ランキング横並び
+    rankingRow: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginTop: '12px' },
+    rankingCard: { backgroundColor: 'white', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden' },
+    rankingHeader: { padding: '12px 16px', borderBottom: '1px solid #F1F5F9', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' },
+    rankingTitle: { fontSize: '13px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' },
+    rankingBody: { padding: '12px' },
+    rankingItem: { padding: '10px', marginBottom: '8px', borderRadius: '8px', position: 'relative' },
+    rankingItemFirst: { background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)', color: '#7C4F00' },
+    rankingItemSecond: { background: 'linear-gradient(135deg, #E8E8E8 0%, #C0C0C0 100%)', color: '#4A4A4A' },
+    rankingRank: { position: 'absolute', top: '-6px', left: '-6px', width: '22px', height: '22px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '10px', boxShadow: '0 2px 6px rgba(0,0,0,0.15)' },
+    rankingRankFirst: { backgroundColor: '#FFD700', color: '#7C4F00' },
+    rankingRankSecond: { backgroundColor: '#C0C0C0', color: '#4A4A4A' },
+    rankingName: { fontSize: '12px', fontWeight: '700', marginBottom: '4px', paddingLeft: '16px' },
+    rankingScore: { fontSize: '20px', fontWeight: '800' },
+    rankingScoreLabel: { fontSize: '9px', opacity: 0.8 },
+    // 比較カード
+    compareCard: { backgroundColor: 'white', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden' },
+    compareHeader: { padding: '12px 16px', borderBottom: '1px solid #F1F5F9' },
+    compareBody: { padding: '12px 16px' },
+    compareItem: { marginBottom: '12px' },
+    compareLabel: { fontSize: '11px', color: '#64748B', marginBottom: '6px' },
+    compareBarRow: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' },
+    compareBarName: { width: '40px', fontSize: '10px', color: '#64748B' },
+    compareBarBg: { flex: 1, height: '18px', backgroundColor: '#F1F5F9', borderRadius: '4px', overflow: 'hidden' },
+    compareBar: { height: '100%', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: '6px', fontSize: '10px', fontWeight: '600', color: 'white', minWidth: '24px', transition: 'width 0.5s ease' },
+    // 効率カード
+    efficiencyCard: { backgroundColor: 'white', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden' },
+    efficiencyGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', padding: '12px' },
+    efficiencyItem: { textAlign: 'center', padding: '10px', borderRadius: '8px' },
+    efficiencyLabel: { fontSize: '9px', color: '#64748B', marginBottom: '2px' },
+    efficiencyValue: { fontSize: '18px', fontWeight: '700' },
+    // 管理者用
     managerLayout: { display: 'flex', flexDirection: 'column', gap: '16px' },
     managerCard: { backgroundColor: 'white', borderRadius: '12px', border: '1px solid #E2E8F0', padding: '16px', overflowX: 'auto' },
     managerTitle: { fontSize: '14px', fontWeight: '600', color: '#1E293B', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' },
@@ -389,6 +421,13 @@ export default function App() {
   const callsProgress = calculateProgress(currentActual.calls, currentKpiCalc.requiredCalls);
   const meetingsProgress = calculateProgress(currentActual.meetings, currentKpiCalc.requiredMeetings);
   const dealsProgress = calculateProgress(currentActual.deals, currentKpiCalc.targetDeals);
+  const rankingData = getRankingData();
+
+  const takahashiData = actuals.takahashi || { calls: 0, meetings: 0, deals: 0 };
+  const kaihoData = actuals.kaiho || { calls: 0, meetings: 0, deals: 0 };
+  const maxCalls = Math.max(takahashiData.calls, kaihoData.calls, 1);
+  const maxMeetings = Math.max(takahashiData.meetings, kaihoData.meetings, 1);
+  const maxDeals = Math.max(takahashiData.deals, kaihoData.deals, 1);
 
   return (
     <div style={styles.container}>
@@ -406,77 +445,128 @@ export default function App() {
 
       <main style={styles.main}>
         {viewMode === 'sales' ? (
-          <div style={{...styles.salesLayout, gridTemplateColumns: window.innerWidth <= 900 ? '1fr' : '340px 1fr'}}>
-            <div style={styles.leftColumn}>
-              {overdueYomis.length > 0 && <div style={styles.alertBox}>⚠️ 期日超過 {overdueYomis.length}件</div>}
-              <div style={styles.card}>
-                <div style={styles.cardHeader}>
-                  <span style={styles.cardTitle}>📊 KPI逆算</span>
-                  <div style={{position: 'relative'}}>
-                    <div style={styles.userBadge} onClick={() => setShowUserSelect(!showUserSelect)}>{currentUser.icon} {currentUser.name} ▼</div>
-                    {showUserSelect && <div style={styles.userDropdown}>{USERS.map(user => <div key={user.id} style={{...styles.userOption, ...(user.id === currentUserId ? styles.userOptionActive : {})}} onClick={() => handleUserChange(user.id)}>{user.icon} {user.name}</div>)}</div>}
+          <>
+            <div style={{...styles.salesLayout, gridTemplateColumns: window.innerWidth <= 900 ? '1fr' : '340px 1fr'}}>
+              {/* 左カラム */}
+              <div style={styles.leftColumn}>
+                {overdueYomis.length > 0 && <div style={styles.alertBox}>⚠️ 期日超過 {overdueYomis.length}件</div>}
+                <div style={styles.card}>
+                  <div style={styles.cardHeader}>
+                    <span style={styles.cardTitle}>📊 KPI逆算</span>
+                    <div style={{position: 'relative'}}>
+                      <div style={styles.userBadge} onClick={() => setShowUserSelect(!showUserSelect)}>{currentUser.icon} {currentUser.name} ▼</div>
+                      {showUserSelect && <div style={styles.userDropdown}>{USERS.map(user => <div key={user.id} style={{...styles.userOption, ...(user.id === currentUserId ? styles.userOptionActive : {})}} onClick={() => handleUserChange(user.id)}>{user.icon} {user.name}</div>)}</div>}
+                    </div>
+                  </div>
+                  <div style={styles.kpiSection}>
+                    <div style={styles.kpiTitle}>月間目標</div>
+                    <div style={styles.kpiGrid}>
+                      <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>必要架電数</div><div style={styles.kpiBoxValue}>{currentKpiCalc.requiredCalls}</div><div style={styles.kpiBoxTarget}>件/月</div></div>
+                      <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>必要商談数</div><div style={styles.kpiBoxValue}>{currentKpiCalc.requiredMeetings}</div><div style={styles.kpiBoxTarget}>件/月</div></div>
+                      <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>目標受注数</div><div style={styles.kpiBoxValue}>{currentKpiCalc.targetDeals}</div><div style={styles.kpiBoxTarget}>件/月</div></div>
+                      <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>1日架電目標</div><div style={styles.kpiBoxValue}>{currentKpiCalc.dailyRequiredCalls}</div><div style={styles.kpiBoxTarget}>件/日</div></div>
+                    </div>
+                  </div>
+                  <div style={styles.progressSection}>
+                    <div style={styles.kpiTitle}>今月の進捗</div>
+                    <div style={styles.progressItem}><div style={styles.progressHeader}><span style={styles.progressLabel}>架電数</span><span style={styles.progressValue}>{currentActual.calls} / {currentKpiCalc.requiredCalls}</span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${callsProgress}%`, backgroundColor: callsProgress >= 80 ? '#22C55E' : callsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/></div></div>
+                    <div style={styles.progressItem}><div style={styles.progressHeader}><span style={styles.progressLabel}>商談数</span><span style={styles.progressValue}>{currentActual.meetings} / {currentKpiCalc.requiredMeetings}</span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${meetingsProgress}%`, backgroundColor: meetingsProgress >= 80 ? '#22C55E' : meetingsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/></div></div>
+                    <div style={styles.progressItem}><div style={styles.progressHeader}><span style={styles.progressLabel}>受注数</span><span style={styles.progressValue}>{currentActual.deals} / {currentKpiCalc.targetDeals}</span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${dealsProgress}%`, backgroundColor: dealsProgress >= 80 ? '#22C55E' : dealsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/></div></div>
+                  </div>
+                  <div style={styles.actions}>
+                    <button style={styles.actionBtn} onClick={openKpiSettingsModal}>⚙️ KPI</button>
+                    <button style={styles.actionBtn} onClick={openActualModal}>✏️ 実績</button>
+                    <button style={styles.actionBtn} onClick={resetActuals}>🔄</button>
                   </div>
                 </div>
-                <div style={styles.kpiSection}>
-                  <div style={styles.kpiTitle}>月間目標（逆算）</div>
-                  <div style={styles.kpiGrid}>
-                    <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>必要架電数</div><div style={styles.kpiBoxValue}>{currentKpiCalc.requiredCalls}</div><div style={styles.kpiBoxTarget}>件/月</div></div>
-                    <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>必要商談数</div><div style={styles.kpiBoxValue}>{currentKpiCalc.requiredMeetings}</div><div style={styles.kpiBoxTarget}>件/月</div></div>
-                    <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>目標受注数</div><div style={styles.kpiBoxValue}>{currentKpiCalc.targetDeals}</div><div style={styles.kpiBoxTarget}>件/月</div></div>
-                    <div style={styles.kpiBox}><div style={styles.kpiBoxLabel}>1日架電目標</div><div style={styles.kpiBoxValue}>{currentKpiCalc.dailyRequiredCalls}</div><div style={styles.kpiBoxTarget}>件/日</div></div>
+                <div style={styles.card}>
+                  <div style={styles.yomiHeader}><span style={styles.cardTitle}>📋 ヨミ表</span><select style={styles.yomiMonthSelect} value={selectedYomiMonth} onChange={(e) => setSelectedYomiMonth(e.target.value)}>{getPast12Months().map(m => <option key={m.value} value={m.value}>{m.label}</option>)}</select></div>
+                  <div style={styles.yomiSummary}>{YOMI_STATUS.slice(0, 3).map(s => <div key={s.id} style={styles.yomiSummaryItem}><span style={{...styles.yomiStatus, backgroundColor: s.bgColor, color: s.color}}>{s.label}</span><span>{yomiSummary[s.id] || 0}</span></div>)}</div>
+                  <div style={styles.yomiList}>
+                    {currentYomiList.length === 0 ? <p style={styles.yomiEmpty}>案件なし</p> : currentYomiList.map(yomi => {
+                      const status = YOMI_STATUS.find(s => s.id === yomi.status);
+                      return (
+                        <div key={yomi.id} style={styles.yomiRow}>
+                          <span style={styles.yomiCompany}>{yomi.companyName || '-'}</span>
+                          <span style={{...styles.yomiStatus, backgroundColor: status?.bgColor, color: status?.color}}>{status?.label}</span>
+                          {isCurrentMonth && <div style={styles.yomiActions}><button style={{...styles.yomiBtn, backgroundColor: '#EFF6FF', color: '#2563EB'}} onClick={() => openYomiModal(yomi)}>編集</button><button style={{...styles.yomiBtn, backgroundColor: '#FEE2E2', color: '#DC2626'}} onClick={() => deleteYomi(yomi.id)}>削除</button></div>}
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-                <div style={styles.progressSection}>
-                  <div style={styles.kpiTitle}>今月の進捗</div>
-                  <div style={styles.progressItem}><div style={styles.progressHeader}><span style={styles.progressLabel}>架電数</span><span style={styles.progressValue}>{currentActual.calls} / {currentKpiCalc.requiredCalls}（{Math.round(callsProgress)}%）</span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${callsProgress}%`, backgroundColor: callsProgress >= 80 ? '#22C55E' : callsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/></div></div>
-                  <div style={styles.progressItem}><div style={styles.progressHeader}><span style={styles.progressLabel}>商談数</span><span style={styles.progressValue}>{currentActual.meetings} / {currentKpiCalc.requiredMeetings}（{Math.round(meetingsProgress)}%）</span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${meetingsProgress}%`, backgroundColor: meetingsProgress >= 80 ? '#22C55E' : meetingsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/></div></div>
-                  <div style={styles.progressItem}><div style={styles.progressHeader}><span style={styles.progressLabel}>受注数</span><span style={styles.progressValue}>{currentActual.deals} / {currentKpiCalc.targetDeals}（{Math.round(dealsProgress)}%）</span></div><div style={styles.progressBar}><div style={{...styles.progressFill, width: `${dealsProgress}%`, backgroundColor: dealsProgress >= 80 ? '#22C55E' : dealsProgress >= 50 ? '#F59E0B' : '#DC2626'}}/></div></div>
-                </div>
-                <div style={styles.actions}>
-                  <button style={styles.actionBtn} onClick={openKpiSettingsModal}>⚙️ KPI設定</button>
-                  <button style={styles.actionBtn} onClick={openActualModal}>✏️ 実績修正</button>
-                  <button style={styles.actionBtn} onClick={resetActuals}>🔄 リセット</button>
+                  {isCurrentMonth && <div style={styles.yomiFooter}><button style={styles.yomiAddBtn} onClick={() => openYomiModal()}>+ 案件追加</button><button style={{...styles.yomiAddBtn, flex: 'none', padding: '6px 10px'}} onClick={openYomiSettingsModal}>⚙️</button></div>}
                 </div>
               </div>
-              <div style={styles.card}>
-                <div style={styles.yomiHeader}><span style={styles.cardTitle}>📋 ヨミ表</span><select style={styles.yomiMonthSelect} value={selectedYomiMonth} onChange={(e) => setSelectedYomiMonth(e.target.value)}>{getPast12Months().map(m => <option key={m.value} value={m.value}>{m.label}</option>)}</select></div>
-                <div style={styles.yomiSummary}>{YOMI_STATUS.slice(0, 3).map(s => <div key={s.id} style={styles.yomiSummaryItem}><span style={{...styles.yomiStatus, backgroundColor: s.bgColor, color: s.color}}>{s.label}</span><span>{yomiSummary[s.id] || 0}</span></div>)}</div>
-                <div style={styles.yomiList}>
-                  {currentYomiList.length === 0 ? <p style={styles.yomiEmpty}>案件なし</p> : currentYomiList.map(yomi => {
-                    const status = YOMI_STATUS.find(s => s.id === yomi.status);
-                    const daysUntil = getDaysUntil(yomi.closingDate);
-                    const overdue = isOverdue(yomi.closingDate) && !['won', 'lost'].includes(yomi.status);
-                    let dateStyle = styles.yomiDateNormal;
-                    if (overdue) dateStyle = styles.yomiDateOverdue;
-                    else if (daysUntil !== null && daysUntil <= 3 && daysUntil >= 0) dateStyle = styles.yomiDateSoon;
-                    return (
-                      <div key={yomi.id} style={styles.yomiRow}>
-                        <span style={styles.yomiCompany}>{yomi.companyName || '-'}</span>
-                        <span style={styles.yomiAmount}>{(yomi.totalAmount || 0).toLocaleString()}円</span>
-                        {yomi.closingDate && <span style={{...styles.yomiDate, ...dateStyle}}>{formatDate(yomi.closingDate)}</span>}
-                        <span style={{...styles.yomiStatus, backgroundColor: status?.bgColor, color: status?.color}}>{status?.label}</span>
-                        {isCurrentMonth && <div style={styles.yomiActions}><button style={{...styles.yomiBtn, backgroundColor: '#EFF6FF', color: '#2563EB'}} onClick={() => openYomiModal(yomi)}>編集</button><button style={{...styles.yomiBtn, backgroundColor: '#FEE2E2', color: '#DC2626'}} onClick={() => deleteYomi(yomi.id)}>削除</button></div>}
+
+              {/* 右カラム */}
+              <div style={styles.rightColumn}>
+                <div style={styles.card}>
+                  <div style={styles.aiHeader}><span style={styles.aiDot}></span><span style={styles.aiTitle}>AIマネージャー</span></div>
+                  <div style={styles.aiResponseArea}>
+                    {isLoading ? <div style={styles.loadingContainer}><div style={styles.loadingSpinner}></div><p style={{fontSize: '12px'}}>分析中...</p></div> : aiResponse ? <div style={styles.aiResponseText}>{aiResponse}</div> : <div style={styles.aiPlaceholder}>報告を提出するとフィードバックします</div>}
+                  </div>
+                </div>
+                <div style={styles.card}>
+                  <div style={styles.reportTabs}>{Object.values(REPORT_TYPES).map(type => <button key={type.id} style={{...styles.reportTab, ...(selectedReportType === type.id ? styles.reportTabActive : {})}} onClick={() => setSelectedReportType(type.id)}>{type.label}</button>)}</div>
+                  <div style={styles.inputContainer}><textarea style={styles.textarea} value={reportContent} onChange={(e) => setReportContent(e.target.value)} placeholder="今日の架電数、商談数、商談結果、ヨミ、課題などを報告してください" /></div>
+                  <div style={styles.inputFooter}><button style={styles.submitButton} onClick={handleSubmitReport} disabled={isLoading}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>提出</button></div>
+                </div>
+              </div>
+            </div>
+
+            {/* ランキング・比較エリア（日報の下に横並び） */}
+            <div style={styles.rankingRow}>
+              {/* ランキング */}
+              <div style={styles.rankingCard}>
+                <div style={styles.rankingHeader}><div style={styles.rankingTitle}>🏆 今月のランキング</div></div>
+                <div style={styles.rankingBody}>
+                  {rankingData.map((member, index) => (
+                    <div key={member.id} style={{...styles.rankingItem, ...(index === 0 ? styles.rankingItemFirst : styles.rankingItemSecond)}}>
+                      <div style={{...styles.rankingRank, ...(index === 0 ? styles.rankingRankFirst : styles.rankingRankSecond)}}>{index + 1}</div>
+                      <div style={styles.rankingName}>{member.icon} {member.name}</div>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end'}}>
+                        <div><div style={styles.rankingScore}>{member.overallScore}%</div><div style={styles.rankingScoreLabel}>総合達成率</div></div>
+                        <div style={{textAlign: 'right', fontSize: '9px', opacity: 0.8}}><div>架電 {member.callsRate}%</div><div>商談 {member.meetingsRate}%</div><div>受注 {member.dealsRate}%</div></div>
                       </div>
-                    );
-                  })}
-                </div>
-                {isCurrentMonth && <div style={styles.yomiFooter}><button style={styles.yomiAddBtn} onClick={() => openYomiModal()}>+ 案件追加</button><button style={{...styles.yomiAddBtn, flex: 'none', padding: '6px 10px'}} onClick={openYomiSettingsModal}>⚙️</button></div>}
-              </div>
-            </div>
-            <div style={styles.rightColumn}>
-              <div style={styles.card}>
-                <div style={styles.aiHeader}><span style={styles.aiDot}></span><span style={styles.aiTitle}>AIマネージャー</span></div>
-                <div style={styles.aiResponseArea}>
-                  {isLoading ? <div style={styles.loadingContainer}><div style={styles.loadingSpinner}></div><p style={{fontSize: '12px'}}>分析中...</p></div> : aiResponse ? <div style={styles.aiResponseText}>{aiResponse}</div> : <div style={styles.aiPlaceholder}>報告を提出するとフィードバックします</div>}
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div style={styles.card}>
-                <div style={styles.reportTabs}>{Object.values(REPORT_TYPES).map(type => <button key={type.id} style={{...styles.reportTab, ...(selectedReportType === type.id ? styles.reportTabActive : {})}} onClick={() => setSelectedReportType(type.id)}>{type.label}</button>)}</div>
-                <div style={styles.inputContainer}><textarea style={styles.textarea} value={reportContent} onChange={(e) => setReportContent(e.target.value)} placeholder="今日の架電数、商談数、商談結果、ヨミ、課題などを報告してください" /></div>
-                <div style={styles.inputFooter}><button style={styles.submitButton} onClick={handleSubmitReport} disabled={isLoading}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>提出</button></div>
+
+              {/* 成績比較 */}
+              <div style={styles.compareCard}>
+                <div style={styles.compareHeader}><span style={styles.cardTitle}>📊 成績比較</span></div>
+                <div style={styles.compareBody}>
+                  <div style={styles.compareItem}>
+                    <div style={styles.compareLabel}>架電数</div>
+                    <div style={styles.compareBarRow}><span style={styles.compareBarName}>髙橋</span><div style={styles.compareBarBg}><div style={{...styles.compareBar, backgroundColor: '#2563EB', width: `${(takahashiData.calls / maxCalls) * 100}%`}}>{takahashiData.calls}</div></div></div>
+                    <div style={styles.compareBarRow}><span style={styles.compareBarName}>海保</span><div style={styles.compareBarBg}><div style={{...styles.compareBar, backgroundColor: '#10B981', width: `${(kaihoData.calls / maxCalls) * 100}%`}}>{kaihoData.calls}</div></div></div>
+                  </div>
+                  <div style={styles.compareItem}>
+                    <div style={styles.compareLabel}>商談数</div>
+                    <div style={styles.compareBarRow}><span style={styles.compareBarName}>髙橋</span><div style={styles.compareBarBg}><div style={{...styles.compareBar, backgroundColor: '#2563EB', width: `${(takahashiData.meetings / maxMeetings) * 100}%`}}>{takahashiData.meetings}</div></div></div>
+                    <div style={styles.compareBarRow}><span style={styles.compareBarName}>海保</span><div style={styles.compareBarBg}><div style={{...styles.compareBar, backgroundColor: '#10B981', width: `${(kaihoData.meetings / maxMeetings) * 100}%`}}>{kaihoData.meetings}</div></div></div>
+                  </div>
+                  <div style={styles.compareItem}>
+                    <div style={styles.compareLabel}>受注数</div>
+                    <div style={styles.compareBarRow}><span style={styles.compareBarName}>髙橋</span><div style={styles.compareBarBg}><div style={{...styles.compareBar, backgroundColor: '#2563EB', width: `${(takahashiData.deals / maxDeals) * 100}%`}}>{takahashiData.deals}</div></div></div>
+                    <div style={styles.compareBarRow}><span style={styles.compareBarName}>海保</span><div style={styles.compareBarBg}><div style={{...styles.compareBar, backgroundColor: '#10B981', width: `${(kaihoData.deals / maxDeals) * 100}%`}}>{kaihoData.deals}</div></div></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 効率比較 */}
+              <div style={styles.efficiencyCard}>
+                <div style={styles.compareHeader}><span style={styles.cardTitle}>📈 効率比較</span></div>
+                <div style={styles.efficiencyGrid}>
+                  <div style={{...styles.efficiencyItem, backgroundColor: '#EFF6FF'}}><div style={styles.efficiencyLabel}>髙橋 アポ率</div><div style={{...styles.efficiencyValue, color: '#2563EB'}}>{rankingData.find(r => r.id === 'takahashi')?.appRate || 0}%</div></div>
+                  <div style={{...styles.efficiencyItem, backgroundColor: '#ECFDF5'}}><div style={styles.efficiencyLabel}>海保 アポ率</div><div style={{...styles.efficiencyValue, color: '#10B981'}}>{rankingData.find(r => r.id === 'kaiho')?.appRate || 0}%</div></div>
+                  <div style={{...styles.efficiencyItem, backgroundColor: '#EFF6FF'}}><div style={styles.efficiencyLabel}>髙橋 受注率</div><div style={{...styles.efficiencyValue, color: '#2563EB'}}>{rankingData.find(r => r.id === 'takahashi')?.convRate || 0}%</div></div>
+                  <div style={{...styles.efficiencyItem, backgroundColor: '#ECFDF5'}}><div style={styles.efficiencyLabel}>海保 受注率</div><div style={{...styles.efficiencyValue, color: '#10B981'}}>{rankingData.find(r => r.id === 'kaiho')?.convRate || 0}%</div></div>
+                </div>
               </div>
             </div>
-          </div>
+          </>
         ) : (
           <div style={styles.managerLayout}>
             {allOverdueYomis.length > 0 && <div style={styles.alertBox}>⚠️ 期日超過: {allOverdueYomis.map(y => `${y.userName}/${y.companyName}`).join(', ')}</div>}
